@@ -1,0 +1,12 @@
+/node_modules/
+/dist/
+/.test-build/
+/coverage/
+/.local/
+/.tools/
+.env
+.env.*
+*.key
+*.pem
+*.crt
+tokens.json
