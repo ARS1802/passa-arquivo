@@ -1,57 +1,48 @@
 # Passa Arquivo
 
-API para administrar arquivos e diretórios de uma única pasta local por HTTPS em
-rede local. Tecnologias escolhidas: **TypeScript, Express e Zod**.
+O passa-arquivo é um sistema para compartilhar arquivos diretamente entre
+dispositivos na rede local. Esta branch contém sua API central, que cuidará
+das conexões, da identidade dos dispositivos e das operações de arquivos.
 
-**Estado: etapa 2 concluída — estrutura e configuração.** Disponíveis: compilação TypeScript,
-validação de configuração por CLI/ambiente e testes automatizados. O servidor HTTPS
-e os endpoints continuam planejados.
+O projeto usa **TypeScript, Express e Zod** e será nativo em Linux Mint, Ubuntu
+e Windows. O pareamento exigirá descoberta ativada nos dois dispositivos e
+confirmação de um código. Depois, os certificados salvos permitirão reconhecer
+os peers por mTLS, mesmo que seus IPs mudem.
 
-## Funcionalidades previstas
+A API ainda não recebe requisições. A base atual permite conferir configuração
+e executar testes em Linux; ainda não implementa P2P nem compatibilidade com
+Windows. Veja a [arquitetura](doc/architecture.md) e o [fluxo de conexão](doc/connection.md).
 
-Saúde autenticada; metadados, listagem e download; upload de um arquivo por requisição;
-criação e exclusão de diretórios/arquivos; renomeação, movimentação, cópia e download
-de diretórios em ZIP. Bearer token, HTTPS, CORS configurável e isolamento de caminhos
-integram o escopo. Veja o [contrato](doc/endpoints.md).
+## Preparar a base atual em Linux
 
-## Requisitos e execução
-
-Base verificada em Linux x86_64: Node.js **24.19.0**, npm **11.17.0**, TypeScript 7,
-Express 5 e Zod 4. Dependências exatas estão no lock. Se já utiliza nvm, execute
-`nvm use` para selecionar a versão de [.nvmrc](.nvmrc) no terminal atual.
+Use Node.js **24.19.0**, indicado em [.nvmrc](.nvmrc), e npm **11.17.0**.
+Se você já usa nvm, execute `nvm use` na pasta do projeto para selecionar o Node.js.
 
 ```sh
 npm ci
 npm run check
+```
+
+`npm ci` instala as versões das dependências registradas no projeto.
+`npm run check` verifica os tipos, compila o código TypeScript e executa os testes.
+
+## Conferir a configuração
+
+Depois da compilação, você pode conferir as opções que serão usadas pelo servidor:
+
+```sh
 npm run check:config -- --root /srv/passa-arquivo/shared \
   --state-dir /srv/passa-arquivo/state --staging-dir /srv/passa-arquivo/staging
 ```
 
-`check` verifica tipos, compila e executa testes. `check:config` confere somente
-sintaxe e relações entre opções, sem criar diretórios ou iniciar servidor. Os caminhos
-acima são exemplos; nenhuma existência ou permissão é verificada por esse comando.
-As [opções e regras completas](doc/configuration.md) detalham precedência e limites.
-A instalação é uma preparação; não deve ser repetida a cada conferência.
+Esse comando confere os valores informados e se as opções são compatíveis entre
+si. Os caminhos acima são exemplos: o comando não cria pastas nem confere se elas
+existem ou podem ser acessadas. Também não lê certificados ou tokens e não inicia
+um servidor.
 
-O comando de inicialização HTTPS será entregue na etapa 8. Exemplo de uso
-**planejado**, utilizável após essa entrega:
+Veja as [opções de configuração](doc/configuration.md) para entender cada valor.
 
-```sh
-curl --cacert "$CLIENT_CA_CERT" \
-  --header "Authorization: Bearer $CLIENT_TOKEN" \
-  'https://localhost:8443/health'
-```
+## Documentação
 
-`CLIENT_CA_CERT` é o caminho do certificado público confiável (ou CA emissora), e
-`CLIENT_TOKEN` contém um token válido entregue pelo operador. São variáveis do
-cliente deste exemplo. O certificado deverá incluir `localhost` no SAN.
-
-## Documentação e limites
-
-Consulte o [índice](doc/README.md), o [planejamento e estado](doc/progress.md), as
-[verificações](doc/testing.md) e as [regras para agentes](AGENTS.md).
-O escopo é rede local, processo único e permissões iguais para todos os tokens.
-Links simbólicos são proibidos pelo contrato. Credenciais e temporários ficarão fora
-da pasta compartilhada. A execução normal exigirá HTTPS, sem fallback HTTP.
-Windows e macOS não têm suporte anunciado. A validação atual não comprova isolamento
-do filesystem, validade de credenciais/certificados ou disponibilidade da futura API.
+O [guia de documentação](doc/README.md) reúne as opções de configuração, as rotas
+previstas e as explicações sobre o código e os testes.

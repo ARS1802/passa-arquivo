@@ -1,6 +1,119 @@
+# Histórico anterior ao modelo P2P
+
+O plano de implementação deste registro foi abandonado por pedido explícito do
+usuário. As indicações de retomada abaixo são históricas e não autorizam trabalho.
+O registro atual está em [progress.md](progress.md).
+
 # Progresso da implementação
 
-## Estado atual
+## Tarefa atual — revisão da documentação
+
+- Data: 2026-09-17.
+- Pedido: usar linguagem simples nos guias, retirar relatos de execução da
+  documentação principal, preservar o histórico em `doc/ai/` e acrescentar um
+  fluxograma para cada um dos dez endpoints.
+- Etapa atual: **correção da linguagem de todos os guias públicos — concluída**.
+- Estado: **aguardando “continuar”**.
+- Autorização: em 2026-09-17, após a primeira parte, o usuário apontou que os
+  outros guias ainda continham linguagem de prompt e pediu explicitamente
+  “Corrija”. Essa correção abrange todos os guias, incluindo segurança e catálogo
+  de módulos. A pausa da implementação da API continua vigente.
+- Decisões essenciais pendentes: nenhuma. Bloqueios: nenhum identificado.
+- Decisões essenciais para a correção: nenhuma pendente.
+- Motivo da pausa: correção solicitada concluída; aguardar autorização para os
+  fluxogramas dos endpoints.
+
+| Parte | Objetivo e resultado | Verificações | Documentos afetados |
+| --- | --- | --- | --- |
+| 1 | Separar os registros em `doc/ai/`, simplificar o README e o índice e registrar as novas regras de escrita | Links locais, preservação do pedido original e do histórico, comandos compatíveis com o código | `AGENTS.md`, README, índice, registros movidos e referências a eles |
+| 2 | Corrigir agora a linguagem dos oito guias públicos, retirar instruções e relatos de trabalho e preservar as regras técnicas | Leitura completa, busca de linguagem de prompt, links, exemplos, catálogo de opções e símbolos; preservação dos registros em `doc/ai/` | Todos os guias em `doc/`, README e registros em `doc/ai/` |
+| 3 | Acrescentar um fluxograma por endpoint e conferir sua correspondência com o texto | Dez rotas cobertas, diagramas renderizados e inspecionados, consistência entre fluxos e parâmetros/respostas | `doc/endpoints.md`, registros em `doc/ai/` |
+
+O pedido de correção mudou a ordem da revisão: os textos de todos os guias serão
+corrigidos agora. Os dez fluxogramas continuam como próxima parte, a autorizar com
+“continuar”. A implementação da API não será retomada por esta correção.
+
+### Correção concluída
+
+- Objetivo: eliminar dos guias públicos números de etapas, rótulos de aprovação,
+  instruções para agentes e relatos de execução; explicar o comportamento em
+  linguagem simples, sem ocultar o que ainda não funciona ou está em definição.
+- Documentos afetados: os oito guias técnicos de `doc/`, com revisão do README e
+  índice; registros retirados serão preservados em `doc/ai/`.
+- Reescritos os oito guias: configuração, testes, arquitetura, módulos e funções,
+  segurança, arquivos, rotas e erros. README e índice foram revisados.
+- Retiradas referências a etapas, aprovações, agentes e instruções de manutenção
+  dirigidas à IA. Termos técnicos necessários ganharam explicações simples.
+- Mantida a distinção entre código disponível e comportamento futuro. Detalhes
+  ainda não decididos continuam indicados como sujeitos a definição ou mudança.
+- Histórico de versões, preparação e execuções preservado em
+  `verification-history.md`. Notas e detalhes provisórios do contrato HTTP estão
+  em `http-notes.md`; notas de segurança e arquivos em `security-filesystem-notes.md`.
+- Corrigidas referências antigas do contrato a limites ainda sem valor: as
+  opções de upload e ZIP já têm valores padrão na configuração, embora essas
+  transferências ainda não estejam implementadas.
+- Nenhum código, dependência, configuração executável ou teste foi alterado.
+
+### Verificações da correção
+
+- Revisão por leitura dos oito guias e comparação dos catálogos com o código.
+- Busca em dez páginas públicas, incluindo README e índice: nenhuma ocorrência
+  dos padrões de linguagem de prompt conferidos, como etapas, rótulos de aprovação
+  ou proposta, agentes, prompt, estado atual e instruções de espera por continuar.
+- Dezessete documentos autorais: 146 links e âncoras locais válidos; blocos de
+  código e formatação conferidos. A especificação original continua idêntica
+  byte a byte à cópia do commit anterior.
+- Dezoito blocos shell públicos conferidos com `sh -n`, sem executar os comandos;
+  cinco exemplos JSON válidos.
+- Dez rotas, doze códigos de erro, 16 opções/campos de configuração e 27 símbolos
+  do módulo de configuração conferidos nos catálogos. Revisão adicional confirmou
+  os pontos de entrada e auxiliares locais descritos em `classes.md`.
+- Diagrama Mermaid existente preservado byte a byte. Nenhum diagrama novo criado.
+- `git diff --check` sem problemas. Nenhuma instalação ou teste de aplicação
+  executado nesta correção documental.
+
+### Trabalho restante e próxima ação
+
+- Nada restante na correção de linguagem solicitada.
+- A próxima parte documental é criar, renderizar e revisar os dez fluxogramas de
+  endpoints. Ela depende de “continuar”.
+- A implementação da API permanece pausada após sua etapa 2. Essa correção não
+  autorizou novos recursos, instalações, commit ou push.
+
+### Histórico — organização e apresentação concluídas
+
+- Lidos os guias obrigatórios, o histórico, o manifesto e os pontos de entrada.
+- Confirmados: árvore Git limpa, aplicação sem rotas e comando de configuração
+  sem acesso a arquivos ou abertura de servidor.
+- Movidos `progress.md`, `decisions.md` e `requirements.md` de `doc/` para
+  `doc/ai/`, com preservação do histórico; criado o índice desta pasta.
+- Reescritos o README e o índice público com linguagem simples, foco no leitor,
+  comandos existentes e indicação de que a API ainda não recebe requisições.
+- Atualizadas as referências aos arquivos movidos. Nos demais guias, somente
+  essas referências foram alteradas; a reescrita deles pertence às partes 2 e 3.
+- Atualizado `AGENTS.md` com o novo local dos registros, linguagem simples em
+  todos os guias e exigência de fluxograma por endpoint. D12 registra o pedido.
+
+### Verificações da organização e apresentação
+
+- Pedido original comparado com a cópia do commit anterior: bytes idênticos.
+  SHA-256: `1841d9cc079a1654acfa1216c2517d59757a62ea2cd9fd63b65d16d96edbfd80`.
+- Revisados 14 documentos autorais, além da cópia literal do pedido: 124 links e
+  âncoras locais válidos; blocos de código fechados e formatação conferida.
+- Os dois exemplos shell do README passaram em `sh -n`, sem execução dos comandos.
+  Scripts e versões foram conferidos com `package.json` e `.nvmrc`.
+- `git diff --check` sem problemas. Código, testes, dependências e configuração do
+  projeto não foram alterados. Nenhuma instalação ou teste de aplicação executado.
+
+Nenhum fluxograma novo foi criado na organização inicial. As pendências atuais
+e a ordem revista estão no plano no início deste arquivo.
+
+## Histórico da implementação da API
+
+Os registros abaixo preservam o trabalho anterior. A tarefa em andamento e a
+próxima ação autorizável estão na seção de revisão da documentação acima.
+
+### Situação da API em 2026-09-06
 
 - Data de referência: 2026-09-06.
 - Etapa atual: **2 — estrutura mínima e configuração — concluída**.
@@ -47,7 +160,8 @@ e documentadas na etapa em que forem necessárias, sem instalação antecipada.
 - Definição de TypeScript, Express e Zod pelo usuário.
 - Apresentação das nove etapas, resultados esperados e verificações.
 - Criação de `AGENTS.md`, README principal e dos 11 documentos obrigatórios de `doc/`.
-- Preservação literal do pedido em `doc/requirements.md`, adicional ao inventário obrigatório.
+- Preservação literal do pedido em `doc/requirements.md`, adicional ao inventário
+  obrigatório; movido depois para [requirements.md](requirements.md).
 - Registro dos dez endpoints e metadados comuns, autenticação, HTTPS/CORS,
   caminhos/links, operações, erros, configuração proposta e plano de testes.
 - Registro de versões e fontes oficiais, requisitos aprovados e escolhas técnicas
@@ -94,7 +208,8 @@ e documentadas na etapa em que forem necessárias, sem instalação antecipada.
   cinco blocos JSON analisados com sucesso. UTF-8, formatação e diff dos documentos
   autorais aprovados; a cópia original conserva sua formatação literal.
 - Consultas de versões/fontes oficiais e revisão cruzada dos documentos concluídas.
-  Procedimentos e resultados completos em `testing.md`.
+  Procedimentos em [testing.md](../testing.md); resultados preservados em
+  [verification-history.md](verification-history.md).
 - Na etapa 1 não foram executados testes funcionais ou HTTPS: aplicação e suítes
   ainda não existiam. Naquele momento não houve afirmação de compatibilidade em execução.
 
@@ -110,7 +225,8 @@ e documentadas na etapa em que forem necessárias, sem instalação antecipada.
   distingue validação sintática/lexical de verificação real de recursos.
 - Nenhum teste de endpoint, autenticação, operação de arquivos ou HTTPS real
   executado; funcionalidades e conjuntos pertencem às próximas etapas.
-- Resultados e limitações detalhados em `testing.md`.
+- Resultados em [verification-history.md](verification-history.md); procedimentos
+  e limites atuais em [testing.md](../testing.md).
 - Revisão final: 26 arquivos autorais, 14 documentos, 125 links/âncoras locais,
   18 exemplos shell e cinco JSON válidos; 16 opções e cinco exports conferidos
   com seus catálogos; manifesto/lock coerentes; especificação original preservada.
@@ -130,10 +246,11 @@ primitivas de publicação, multipart, ZIP e emissão de certificados nas etapas
 pertinentes. Existência/permissões dos caminhos, relação física com o repositório,
 tokens, chave/certificado, TLS e listener não são verificados por `check:config`.
 
-Autorização atual encerrada com a etapa 2; nenhuma implementação ou preparação da
-etapa 3 foi iniciada. Próxima ação autorizável: mediante novo “continuar”, iniciar
-somente a etapa 3 (autenticação e política de caminhos), com testes e documentação
-pertinentes, e parar novamente ao concluí-la.
+A autorização de implementação encerrou-se com a etapa 2; nenhuma implementação
+ou preparação da etapa 3 foi iniciada. A próxima etapa da API será autenticação e
+política de caminhos. Sua retomada depende de nova autorização após a revisão
+documental; o próximo “continuar” agora pertence à documentação, conforme o plano
+no início deste arquivo.
 
 ## Versionamento
 

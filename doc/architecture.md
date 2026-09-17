@@ -1,22 +1,59 @@
-# Arquitetura
+# Arquitetura do passa-arquivo
 
-## Estado
+O passa-arquivo é um sistema Peer-to-Peer (P2P): os dispositivos se conectam
+entre si, sem depender de um servidor central para guardar seus arquivos.
+A API desta branch é o módulo central do software instalado em cada máquina;
+isso não significa um servidor central obrigatório na rede.
 
-**Etapa 2:** estão implementados um módulo puro de configuração, um comando de
-conferência e uma fábrica Express sem rotas ou listener. Os símbolos reais estão
-em [classes.md](classes.md); testes e resultados em [testing.md](testing.md).
-Autenticação, caminhos de recursos, operações de arquivos, handlers, HTTPS, emissão
-de certificados e CORS continuam planejados. Campos dessas funcionalidades já
-podem ser analisados pela configuração, mas não as executam. Os dez endpoints
-ainda não estão expostos.
+Cada instalação poderá receber e iniciar conexões. Seus arquivos continuarão
+sob uma raiz compartilhada local, e a identidade do dispositivo será seu
+certificado persistente. As plataformas alvo são Linux Mint, Ubuntu e Windows.
 
-## Componentes implementados e dependências
+## Componentes do sistema
 
-| Componente e fonte | Responsabilidade atual | Dependências |
+| Componente | Responsabilidade |
+| --- | --- |
+| API central | Descoberta, pareamento, verificação dos peers, persistência e operações de arquivos. |
+| Interface do usuário | Mostrar candidatos e pedidos; permitir ativar a descoberta, informar o código, aceitar ou recusar. Ainda não existe nesta branch. |
+| Outros componentes do ecossistema | Poderão existir em branches órfãs separadas do mesmo repositório. Seus nomes e responsabilidades adicionais ainda não foram definidos. |
+
+Uma branch órfã começa com histórico independente. Essa organização do Git não
+cria isolamento de segurança entre processos nem define a comunicação entre os
+componentes. Nenhuma nova branch faz parte da configuração disponível hoje.
+
+## Três responsabilidades de conexão
+
+| Parte | Quem inicia | Limite |
 | --- | --- | --- |
-| Configuração — [config/index.ts](../src/config/index.ts), `loadConfig` | Receber argumentos/ambiente; validar valores/relações lexicais; retornar configuração imutável ou `ConfigurationError` | Zod, `node:net.isIP`, `node:path.posix` e análise textual `URL`; sem Express |
-| Conferência CLI — [check-config.ts](../src/check-config.ts), bloco principal | Obter entradas do processo, chamar `loadConfig`, escrever diagnóstico seguro e definir término | Configuração e APIs do processo; não importa/instancia aplicação |
-| Composição HTTP inicial — [app.ts](../src/app.ts), `createApp` | Criar Express e desabilitar `x-powered-by` | Express; não recebe configuração nem registra funcionalidades |
+| Controle local | Usuário da máquina | Abrir e fechar descoberta, escolher redes e confirmar pedidos; proteção local ainda a definir. |
+| Descoberta e pareamento | Usuários dos dois dispositivos | Entrada temporária para encontrar candidatos e confirmar confiança; sem acesso a arquivos. |
+| Operações entre peers conhecidos | Dispositivos com confiança bilateral concluída | Conexões HTTPS com mTLS e verificação da identidade persistida. |
+
+A entrada provisória `/connect` só ficará disponível para novos pareamentos
+quando a descoberta estiver ativa. Sua ativação precisa vir de um comando local,
+pois um serviço de rede fechado não recebe a própria ordem de abertura.
+Fechar a descoberta não remove peers salvos.
+
+O fluxo humano e os limites da busca estão em [Conectar dispositivos](connection.md).
+A separação entre certificados apresentados e confiáveis está em
+[Segurança](security.md), e o modelo de persistência em [Dispositivos conhecidos](peers.md).
+
+## Código disponível hoje
+
+O código tem três partes: uma função que confere a configuração, um comando para
+usar essa função no terminal e uma função que cria a aplicação Express. A aplicação
+ainda não recebe requisições nem acessa os arquivos compartilhados.
+
+Este guia explica como essas partes se conectam. Para consultar funções, tipos
+e campos individuais, veja [Módulos e funções](classes.md).
+
+## Os três arquivos principais
+
+| Arquivo | O que faz | O que usa |
+| --- | --- | --- |
+| [config/index.ts](../src/config/index.ts) | `loadConfig` confere os valores recebidos e devolve a configuração ou um erro | Zod e funções do Node.js para analisar IPs, URLs e caminhos |
+| [check-config.ts](../src/check-config.ts) | Lê os argumentos do terminal e as variáveis de ambiente, chama `loadConfig` e mostra o resultado | Módulo de configuração e informações do processo Node.js |
+| [app.ts](../src/app.ts) | `createApp` cria uma aplicação Express com o cabeçalho `x-powered-by` desabilitado | Express |
 
 ```mermaid
 flowchart LR
@@ -29,152 +66,148 @@ flowchart LR
     BOOTTEST --> FACTORY
 ```
 
-As setas indicam uso, não inicialização de servidor. `createApp` ainda não possui
-consumidor de produção; sua composição é exercitada em subprocesso pelo teste de
-bootstrap. Não há contêiner de injeção, serviço de arquivos ou classe genérica
-criada para funcionalidades futuras.
+As setas mostram qual parte usa a outra. No diagrama, CLI significa comando de
+terminal; `stdout` e `stderr` são as saídas de mensagens comuns e de erro, e
+`exitCode` é o número que indica como o comando terminou. Um *listener* é um
+servidor esperando conexões em uma porta. Nenhum desses arquivos abre uma porta.
 
-## Fluxos atuais
+`check-config` não chama `createApp`. A função `createApp` é usada somente pelos
+testes; ainda não há um comando que a conecte a um servidor HTTPS.
 
-O script npm `check:config` executa o JavaScript compilado `dist/check-config.js`:
+## O que acontece ao conferir a configuração
 
-1. Obter `process.argv.slice(2)` e `process.env`.
-2. Chamar `loadConfig`: rejeitar argumentos inválidos e nomes desconhecidos
-   `PASSA_`; selecionar CLI > ambiente > defaults para cada opção.
-3. Derivar caminhos TLS padrão em `self-signed`, analisar tipos com Zod e verificar
-   relações lexicais entre diretórios, materiais e bind/SAN.
-4. Retornar configuração congelada ou lançar `ConfigurationError` com mensagens
-   controladas, sem valores rejeitados.
-5. A CLI informa o resultado: configuração inválida define código `2`, falha
-   inesperada define `1`; execução válida termina normalmente com `0`.
+Depois da compilação, `npm run check:config -- ...` executa
+`dist/check-config.js`. O caminho percorrido é este:
 
-A CLI descarta o retorno de configuração. Sua mensagem de sucesso informa que
-diretórios/certificados/tokens não foram verificados e nenhum servidor foi iniciado.
-O módulo CLI tem efeitos quando avaliado; `app` e `config` não abrem recursos de
-rede ao importar. Separadamente, `createApp()` apenas aloca/configura Express;
-não existe chamada a `listen`, servidor HTTPS ou handler de saúde nesse fluxo.
+1. O comando obtém os argumentos de `process.argv.slice(2)` e as variáveis de
+   ambiente de `process.env`.
+2. `loadConfig` rejeita argumentos inválidos e variáveis desconhecidas que
+   começam com `PASSA_`. Para cada opção, usa o argumento do terminal, a variável
+   de ambiente ou o valor padrão, nessa ordem.
+3. No modo `self-signed`, calcula os caminhos padrão do certificado e da chave
+   quando eles não foram informados. Zod confere os tipos dos valores e as
+   combinações entre opções, como as pastas e os endereços do certificado.
+4. Se houver um problema, a função lança `ConfigurationError`. Caso contrário,
+   devolve um objeto que não pode ser alterado, incluindo suas listas.
+5. O comando mostra o resultado e termina com código `0` no sucesso, `2` para
+   configuração inválida ou `1` para uma falha inesperada. As mensagens não
+   reproduzem os valores recebidos.
 
-## Configuração versus preparação operacional
+O comando descarta o objeto retornado: sua finalidade é conferir as opções.
+Ele não cria diretórios, lê tokens, prepara certificados ou inicia o servidor.
 
-`loadConfig` é síncrona, recebe dados explicitamente e não faz I/O. Usa `node:net`
-somente para validar IP e `URL` somente para analisar/canonicalizar texto, sem
-consulta DNS ou conexão.
+Importar `check-config` já executa esse comando. Importar `app` ou `config` apenas
+disponibiliza suas funções e tipos, sem executar o comando ou abrir conexões.
 
-Caminhos de configuração são absolutos e normalizados lexicalmente, preservando
-espaços. As relações usam componentes POSIX, não prefixo textual bruto. Isso não
-demonstra a posição real de uma entrada após seguir links. A convenção relativa
-e estrita dos caminhos públicos da API é outra responsabilidade, não implementada.
+## Conferir um caminho não é abrir o arquivo
 
-Permanecem pendentes: existência, tipo, propriedade e permissões; raiz efetiva;
-links/aliases; relação efetiva com repositório e filesystem de staging; leitura ou
-geração de tokens; validação/preparação de certificados. O módulo atual não recebe
-caminho do repositório nem consulta o diretório corrente. Configuração sintaticamente
-válida não equivale a preparação operacional concluída.
+`loadConfig` trabalha somente com os dados que recebe. Por exemplo, consegue
+reduzir `/dados/pasta/../arquivos` a `/dados/arquivos`, mas não verifica se essa
+pasta existe. Também preserva os espaços que fazem parte dos nomes.
 
-`ConfigurationError` estende `Error` sem código HTTP. A CLI traduz para stderr e
-código de término. `application/problem+json`, descrito em [errors.md](errors.md),
-continua contrato HTTP futuro, não a representação deste comando.
+Para comparar caminhos, considera cada pasta do caminho: `/dados/a` não contém
+`/dados/ab`. Essa comparação é feita sobre o texto. Um link simbólico pode apontar
+para outro local no disco, e essa função não segue nem inspeciona links.
 
-## Compilação e testes
+Ela também não confere tipo de arquivo, dono, permissões, relação com a pasta do
+repositório ou se dois caminhos estão no mesmo sistema de arquivos. Não consulta
+o diretório de trabalho atual. Ao analisar um IP ou uma URL, não faz consultas
+DNS nem conexões de rede.
 
-A estrutura usa ESM (`type: module`), TypeScript `NodeNext`, target `ES2023`,
-`strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes` e
-`verbatimModuleSyntax`. `src` compila para `dist`; produção executa JavaScript no
-Node. A configuração de testes estende a principal, compila fontes/testes para
-`.test-build` e usa `node --test`.
+Por isso, uma configuração aceita ainda pode se referir a uma pasta inacessível,
+um token ausente ou um certificado inválido. A leitura desses recursos e a
+validação dos caminhos enviados à API ainda não existem.
 
-Express/Zod são dependências de execução; TypeScript/tipagens, de desenvolvimento.
-Versões, lock e instalação ficam em [configuration.md](configuration.md). Não há
-script `start` de servidor nesta etapa.
+`ConfigurationError` é um erro usado pelo comando de terminal. Ele não tem um
+status HTTP. O formato `application/problem+json` descrito em [Erros](errors.md)
+será usado pelas respostas da API, que ainda não estão disponíveis.
 
-`tests/config.test.ts` chama `loadConfig` com entradas isoladas. Caminhos dos testes
-são strings que o módulo não cria/lê. `tests/bootstrap.test.ts` executa CLI em
-subprocessos e observa efeitos; cria um diretório temporário próprio para detectar
-gravações indevidas e o remove após o teste. Outro caso instancia Express em
-subprocesso e verifica ausência de listener ativo. Essa cobertura não equivale a
-testes funcionais dos endpoints ou TLS.
+## Como o código é compilado e testado
 
-## Componentes e responsabilidades previstas
+O projeto usa módulos JavaScript com `import` e `export` (ESM). O TypeScript
+segue as regras de módulos do Node.js com `NodeNext`, gera JavaScript para
+`ES2023` e grava o resultado de `src` em `dist`.
 
-A tabela abaixo descreve o desenho completo ainda planejado. Somente a análise de
-configuração e a composição Express mínima descritas acima estão implementadas;
-os nomes de componentes não obrigam a criar classes ou arquivos correspondentes.
+As opções `strict`, `noUncheckedIndexedAccess` e `exactOptionalPropertyTypes`
+ajudam a identificar usos de valores ausentes e tipos incompatíveis.
+`verbatimModuleSyntax` mantém a distinção entre importações de valores e de tipos.
+Veja a configuração completa em [tsconfig.json](../tsconfig.json).
 
-| Componente | Responsabilidade | Dependências permitidas |
-| --- | --- | --- |
-| Configuração | Ler fontes, aplicar precedência, validar tipos e restrições antes da escuta | Zod e APIs de ambiente; sem dependência dos handlers |
-| Inicialização e encerramento | Resolver raiz, preparar diretórios privados, certificados e tokens; compor aplicação e listener HTTPS; liberar recursos | Configuração, autenticação, aplicação, filesystem e TLS |
-| HTTP | Rotear métodos/URLs, autenticar, validar query/headers/corpo, produzir status, headers e representação pública | Express, Zod, autenticação e operações de aplicação |
-| Autenticação | Preparar e comparar credenciais; distinguir ausência/invalidez sem expor segredos | Criptografia do runtime e configuração; adaptador HTTP separado da verificação do token |
-| Aplicação | Coordenar políticas de origem/destino, conflitos, exclusão, cópia e transferências | Caminhos, acesso ao filesystem e erros internos; sem tipos de Express |
-| Caminhos | Validar o contrato relativo à raiz e a política de componentes/links | Raiz efetiva, inspeção controlada do filesystem e erros internos; sem Request/Response |
-| Acesso ao filesystem | Executar inspeção, leitura, escrita, staging, publicação e limpeza com garantias documentadas | APIs do runtime; bibliotecas específicas só quando necessárias |
-| Tradução de erros | Mapear falhas internas/validação para `application/problem+json`; tratar desconexões conforme fase da transferência | Erros internos e adaptador HTTP; sanitização de mensagens |
+Express e Zod são usados na execução. TypeScript e os pacotes de tipos são usados
+no desenvolvimento. As versões e os comandos de instalação estão em
+[Configuração](configuration.md). Não existe um script `start` para iniciar a API.
 
-Tipos do HTTP não devem se propagar às regras de arquivos. Um teste de conflito de
-destino, por exemplo, deverá chamar a operação correspondente com diretórios temporários,
-sem precisar iniciar Express ou TLS. Dependências serão passadas na composição quando
-necessário; não há justificativa aprovada para contêiner de injeção ou repositório genérico.
+A configuração dos testes compila fontes e testes para `.test-build` e usa
+`node --test` para executá-los:
 
-## Fluxo previsto de requisição
+- [config.test.ts](../tests/config.test.ts) chama `loadConfig` com dados de teste.
+  Os caminhos são apenas textos; a função não lê nem cria essas pastas.
+- [bootstrap.test.ts](../tests/bootstrap.test.ts) executa o comando em processos
+  separados e verifica suas saídas. Usa uma pasta temporária própria para
+  detectar gravações indevidas e a remove ao terminar. Também confere que criar
+  a aplicação Express não abre um servidor.
 
-1. O listener HTTPS negocia TLS. O cliente verifica confiança e identidade do certificado.
-2. O tratamento CORS identifica preflight e, para origem configurada, responde sem
-   exigir o Bearer da operação. A requisição efetiva continua autenticada.
-3. A autenticação valida `Authorization: Bearer TOKEN`, antes do parser de upload e
-   antes de executar qualquer operação de arquivos, inclusive `/health`.
-4. O adaptador HTTP valida localização, tipo e esquema dos campos. TypeScript não
-   valida dados de rede em execução; Zod será responsável pelos esquemas.
-5. A política de caminhos valida a entrada após uma única decodificação normal da URL
-   e inspeciona origem, destino e componentes intermediários necessários.
-6. A operação de aplicação coordena filesystem, conflitos e recursos temporários.
-7. O HTTP envia metadados/bytes/status e traduz erros que ainda possam receber resposta.
-   Depois dos headers, uma falha de transferência encerra o fluxo e libera recursos;
-   não troca a resposta por JSON retroativamente.
+Esses testes não cobrem requisições da API ou conexões HTTPS. Consulte
+[Testes](testing.md) para saber como executá-los.
 
-O detalhamento de ordem dos middlewares deverá ser verificado contra Express e seus
-parsers na implementação. Em particular, autenticação de upload não pode depender do
-processamento integral do multipart.
+## Organização interna prevista
 
-## Direção das dependências planejada para o servidor
+As responsabilidades abaixo ainda precisam de implementação. Os nomes descrevem
+partes do sistema, não classes já existentes.
 
-```text
-Inicialização → configuração + TLS + autenticação + composição
-HTTP → autenticação + validação + aplicação
-Aplicação → política de caminhos + acesso ao filesystem + erros internos
-Tradução HTTP → erros internos
-```
+| Parte | Responsabilidade |
+| --- | --- |
+| Identidade local | Preparar chave e certificado na instalação e preservá-los ao reiniciar. |
+| Descoberta | Validar alvos locais, limitar a varredura, reunir candidatos e encerrar a janela temporária. |
+| Pareamento | Associar pedido, certificados e código; obter aceite; confirmar os dois lados sem liberar arquivos antes da hora. |
+| Registro de peers | Guardar nome, certificado e horários; atualizar conexão conhecida sem usar IP como identidade. |
+| Transporte mTLS | Conferir os certificados e a prova de posse das chaves conforme o contexto de pareamento ou uso normal. |
+| HTTP e validação | Interpretar método, rota, parâmetros e corpo com Express e Zod; representar respostas de forma consistente. |
+| Operações de arquivos | Coordenar consultas, envio, cópia, movimentação e exclusão dentro da raiz local. |
+| Acesso ao sistema operacional | Tratar caminhos, links, permissões, arquivos abertos e encerramento nativos de Linux e Windows. |
+| Configuração e erros | Conferir valores, descrever falhas sem segredos e separar erros TLS, HTTP e do processo local. |
 
-Erros internos não devem importar Express. A configuração implementada não inicia
-listeners como efeito colateral de importação. Montagem da aplicação e abertura
-da porta permanecem responsabilidades distintas, permitindo testes internos nas
-etapas 3–7.
+As regras de arquivos não precisarão conhecer `Request` ou `Response` do Express.
+A lógica de pareamento também deve distinguir a decisão do usuário local das
+mensagens recebidas de um candidato remoto. Um pedido remoto não poderá iniciar
+varreduras arbitrárias ou confirmar seu próprio aceite.
 
-## Transporte, recursos e concorrência
+## Uso depois do pareamento
 
-HTTPS é obrigatório no modo normal; não haverá listener HTTP nem redirecionamento.
-A integração real do transporte será verificada na etapa 8. Até lá, a aplicação
-testável não deve ser apresentada como servidor pronto para uso.
+1. A encontra um endereço atual de B; esse endereço é apenas uma localização.
+2. A e B estabelecem mTLS e conferem o certificado salvo do outro dispositivo,
+   a posse da chave correspondente e a política de validade.
+3. Só depois de concluir a verificação mútua uma requisição chega às operações
+   de arquivos. `/health` também não funciona como atalho de descoberta pública.
+4. Zod confere parâmetros e corpo. As regras de caminhos verificam origem,
+   destino e pastas intermediárias necessárias.
+5. A operação processa os dados por partes, respeita limites e limpa temporários.
+6. O servidor envia a resposta. Uma falha após o começo de um download encerra
+   a transferência; não acrescenta JSON ao arquivo.
 
-Download, recebimento de upload e geração/transferência ZIP deverão processar dados
-incrementalmente. Uma Promise não torna uma operação automaticamente streaming ou
-atômica. Temporários serão privados e terão ciclo de vida vinculado à operação.
+A autenticação ocorre antes de acessar arquivos. Uma falha durante o handshake
+pode encerrar a conexão antes de existir uma requisição HTTP, como explicado em
+[Erros](errors.md).
 
-O processo inicial será único. Eventual exclusão mútua de mutações dentro dele é uma
-proposta de implementação, insuficiente para impedir mudanças externas. Staging e
-publicação deverão respeitar o filesystem do destino. Operações recursivas não têm
-garantia geral de transação ou snapshot. Consulte [filesystem.md](filesystem.md).
+## Portabilidade e concorrência
 
-## Escolhas e fontes
+Os caminhos da API terão o mesmo formato nos dois sistemas; os caminhos locais,
+permissões e mecanismos de publicação precisam respeitar o sistema operacional.
+Não se pode obter suporte a Windows apenas trocando o separador de pastas.
+Veja [Linux e Windows](platforms.md).
 
-- Express é o framework HTTP escolhido; sua API recebe requisições/respostas e não
-  impõe a arquitetura das regras de arquivos. [API Express 5](https://expressjs.com/en/5x/api.html).
-- Zod valida dados em execução e requer configuração TypeScript estrita conforme
-  sua documentação. [Introdução do Zod](https://zod.dev/).
-- TypeScript fornece tipagem estática; as verificações de tipos não substituem
-  validação de entrada. [TypeScript Handbook](https://www.typescriptlang.org/docs/handbook/2/basic-types.html).
-- O uso de `node:https`, `node:tls`, `node:crypto`, `node:fs` e streams na produção
-  permanece planejado para as respectivas etapas. [Documentação Node.js 24](https://nodejs.org/docs/latest-v24.x/api/).
+Cada instância usará um único processo. A forma de coordenar operações simultâneas
+sobre o mesmo arquivo ainda precisa ser definida. Uma trava interna não impede
+que outros programas alterem a pasta diretamente.
 
-As versões consultadas e decisões de módulos, compilação e dependências estão em
-[configuration.md](configuration.md) e [decisions.md](decisions.md).
+Uploads e cópias deverão preparar o resultado em uma área privada antes de
+colocá-lo no destino. Operações recursivas não garantem desfazer tudo em caso de
+falha nem representar todos os arquivos no mesmo instante. Os limites ficam em
+[Arquivos e pastas](filesystem.md).
+
+## Referências das bibliotecas
+
+- [Express 5](https://expressjs.com/en/5x/api.html): tratamento de requisições e respostas HTTP.
+- [Zod](https://zod.dev/): validação dos dados durante a execução.
+- [TypeScript](https://www.typescriptlang.org/docs/handbook/2/basic-types.html): verificação dos tipos durante o desenvolvimento.
+- [Node.js 24](https://nodejs.org/docs/latest-v24.x/api/): funções de rede, arquivos e criptografia. O uso de `node:https`, `node:tls`, `node:crypto`, `node:fs` e streams no código da API ainda precisa ser implementado.

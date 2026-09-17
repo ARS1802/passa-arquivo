@@ -1,5 +1,8 @@
 # Registro de decisões
 
+O pedido P2P de D13 substitui premissas incompatíveis dos registros anteriores.
+O plano antigo foi abandonado; consultar [progress.md](progress.md) antes de agir.
+
 ## Convenções
 
 Estados: **aprovada**, **proposta** ou **substituída**. A aprovação de um requisito
@@ -10,7 +13,8 @@ escolhas explícitas do usuário.
 
 A fonte dos requisitos aprovados é [requirements.md](requirements.md). A escolha
 tecnológica foi explicitada pelo usuário posteriormente: “Linguagem: TypeScript +
-Zod. Framework: Express”. Não há decisões substituídas até o momento.
+Zod. Framework: Express”. D10 substitui a proposta de versões de D03; D12 atualiza
+a organização e o estilo documental descritos em D09.
 
 ## D01 — Implementação com autorização por etapa
 
@@ -64,7 +68,7 @@ Zod. Framework: Express”. Não há decisões substituídas até o momento.
   [registro TypeScript 7.0.2](https://registry.npmjs.org/typescript/7.0.2),
   [registro Express 5.2.1](https://registry.npmjs.org/express/5.2.1),
   [registro Zod 4.5.4](https://registry.npmjs.org/zod/4.5.4).
-  Fontes das tipagens e comandos propostos: [configuration.md](configuration.md).
+  Fontes das tipagens e comandos propostos: [configuration.md](../configuration.md).
 
 ## D04 — Contrato HTTP v2
 
@@ -82,7 +86,7 @@ Zod. Framework: Express”. Não há decisões substituídas até o momento.
   responsabilidades, inclusive PUT que preserva conteúdo de diretório já existente.
 - Consequências: documentação técnica por endpoint e testes de semântica/repetição;
   query parameters não tornam as operações de recursos automaticamente RPC.
-  Nenhuma rota está exposta nesta etapa. Veja [endpoints.md](endpoints.md).
+  Nenhuma rota está exposta nesta etapa. Veja [endpoints.md](../endpoints.md).
 
 ## D05 — Precisões propostas para validação e representação
 
@@ -100,14 +104,14 @@ Zod. Framework: Express”. Não há decisões substituídas até o momento.
   do ambiente; o pedido também exige rejeitar campos inesperados em operações indicadas.
 - Justificativa: tornar o contrato verificável e previsível.
 - Consequências: exemplos e testes deverão refletir exatamente a política adotada.
-  [errors.md](errors.md) propõe códigos, identificadores `type` e distribuição dos
-  casos entre 400/403/409/422. [filesystem.md](filesystem.md) detalha nomes e entradas.
+  [errors.md](../errors.md) propõe códigos, identificadores `type` e distribuição dos
+  casos entre 400/403/409/422. [filesystem.md](../filesystem.md) detalha nomes e entradas.
   Esses complementos não são novas decisões atribuídas ao usuário.
 
 ## D06 — Isolamento, staging e concorrência
 
 - Estado: requisitos centrais **aprovados pelo usuário**; mecanismos adicionais
-  em [filesystem.md](filesystem.md) são **propostas técnicas**.
+  em [filesystem.md](../filesystem.md) são **propostas técnicas**.
 - Contexto: uploads/cópias com falha não podem apagar o destino anterior; validação
   textual de prefixo não protege adequadamente uma raiz compartilhada.
 - Decisão aprovada: raiz efetiva resolvida no startup, caminhos relativos, proibição
@@ -138,7 +142,7 @@ Zod. Framework: Express”. Não há decisões substituídas até o momento.
 - Proposta: gerar 16 tokens temporários por execução por padrão, com entrega em arquivo
   privado; aceitar tokens externos para automação; origens CORS vazias por padrão e
   `null` somente por opção explícita. Parâmetros de certificados e duração propostos
-  em [configuration.md](configuration.md).
+  em [configuration.md](../configuration.md).
 - Alternativas: usuários/perfis, OAuth, mTLS, infraestrutura de CA e instalação de
   confiança nos clientes; estão fora do escopo inicial.
 - Justificativa: atender o modelo de acesso definido sem introduzir gestão de identidade.
@@ -164,13 +168,14 @@ Zod. Framework: Express”. Não há decisões substituídas até o momento.
 - Consequências: validar opções cruzadas e relações entre diretórios; só anunciar
   prontidão após abertura real da porta. Não matar processos concorrentes nem alterar
   firewall. Todos os parâmetros e limites propostos estão em
-  [configuration.md](configuration.md). O parser `loadConfig` está implementado;
+  [configuration.md](../configuration.md). O parser `loadConfig` está implementado;
   preparar diretórios, credenciais, TLS e escuta ainda depende de etapas futuras.
 
 ## D09 — Documentação técnica como entrega incremental
 
 - Estado: **aprovada pelo usuário** quanto à estrutura obrigatória; preservação do
-  texto original é uma organização documental adotada nesta etapa.
+  texto original é uma organização documental adotada nesta etapa. A localização
+  dos registros e o estilo dos guias foram atualizados por D12.
 - Contexto: agentes futuros precisam retomar sem depender da transcrição da conversa.
 - Decisão: manter `AGENTS.md`, README curto, índice, contrato, catálogo de unidades,
   arquitetura, filesystem, segurança, configuração, erros, testes, decisões e progresso.
@@ -203,8 +208,8 @@ Zod. Framework: Express”. Não há decisões substituídas até o momento.
   testes usam `node:test` e `node:assert/strict`, sem framework adicional.
   `npm run check` passou com 46 testes. O suporte da API completa, TLS e operações
   de arquivos permanece pendente; as versões instaladas não comprovam esses recursos.
-- Fontes e comandos: [configuration.md](configuration.md); resultados em
-  [testing.md](testing.md). As fontes oficiais de distribuição de D03 continuam
+- Fontes e comandos: [configuration.md](../configuration.md); resultados em
+  [verification-history.md](verification-history.md). As fontes oficiais de distribuição de D03 continuam
   referências para disponibilidade, sem substituir os números executados acima.
 
 ## D11 — Configuração pura e conferência sem inicialização
@@ -231,3 +236,58 @@ Zod. Framework: Express”. Não há decisões substituídas até o momento.
   Existência, propriedade, permissões, raiz efetiva, relação com o repositório,
   conteúdo de credenciais/certificados e filesystem de staging ainda não são verificados.
   O resultado da CLI declara esses limites e não anuncia prontidão do servidor.
+
+## D12 — Guias simples e registros de trabalho separados
+
+- Data: 2026-09-17.
+- Estado: **pedido explícito do usuário**.
+- Decisão: escrever todos os guias em linguagem acessível a quem está começando;
+  retirar deles relatos de etapas, convenções de aprovação e instruções para a IA;
+  incluir um fluxograma para cada endpoint.
+- Organização: manter os guias em `doc/` e guardar planejamento, progresso,
+  histórico de verificações, decisões de trabalho e pedido original em `doc/ai/`.
+  O texto original é preservado, inclusive quando menciona a organização antiga.
+- Motivo: ajudar o leitor a entender e usar o projeto sem precisar acompanhar
+  o processo de implementação ou a conversa com a IA.
+- Consequências: revisar a documentação em três partes, conforme
+  [progress.md](progress.md). O novo pedido substitui a regra de restringir
+  explicações cotidianas a uma seção dos endpoints. As pausas entre partes
+  continuam obrigatórias; esta revisão não autoriza retomar a implementação da API.
+- Precisão: manter parâmetros, respostas, erros e limites técnicos, explicando
+  termos necessários e distinguindo funcionalidades disponíveis das que ainda
+  faltam. A mudança de linguagem não altera o comportamento previsto para a API.
+- Complemento em 2026-09-17: o usuário apontou que referências a etapas ainda
+  apareciam em segurança e no catálogo de módulos e pediu a correção. A revisão
+  de linguagem passa a abranger todos os guias públicos imediatamente; os
+  fluxogramas permanecem como a próxima parte. O plano corrente está em
+  [progress.md](progress.md).
+
+## D13 — Documentação P2P, TOFU/mTLS e plataformas nativas
+
+- Origem: pedido explícito do usuário para abandonar o plano de implementação
+  atual, preservar suas lições e trabalhar exclusivamente na documentação.
+- Alvo: API central do sistema P2P passa-arquivo, nativa em Linux Mint, Ubuntu e
+  Windows. Outros componentes poderão ocupar branches órfãs no futuro.
+- Identidade: par de chaves e certificado por instalação; certificado persistente
+  identifica o peer, independentemente do endereço IP.
+- Pareamento: `/connect` provisório, descoberta e varredura local sob ação do
+  usuário, envio de certificado, código gerado por A e comunicado fora do canal,
+  aceite de B. O usuário confirmou que ambos ativam a descoberta e que ambos
+  persistem o certificado do outro.
+- Registro obrigatório: nome do dispositivo/usuário, certificado, primeira e
+  última conexão. Nomes de campos e semântica operacional descritos em `peers.md`
+  são a especificação documental em revisão, não estruturas já implementadas.
+- Substitui: exclusividade Linux, exclusão de mTLS/persistência de peers, Bearer
+  como identidade entre peers, geração de identidade por reinício e pressuposto
+  de que mudança de IP deve exigir nova identidade.
+- Cuidados técnicos: separar contexto TLS de pareamento do serviço de arquivos;
+  não confiar em PEM recebido sem prova de posse e confirmação vinculada à sessão;
+  não tratar código retransmitido como defesa contra intermediário. PAKE é uma
+  família a avaliar, não uma escolha fechada de protocolo ou biblioteca.
+- Questões abertas: perfil/renovação do certificado, política de pinning e nome
+  estável, formato de persistência, controle local, limites e contrato HTTP final.
+- Skill: `api-design-principles`. Aplicadas separação de responsabilidades,
+  semântica de métodos e erros consistentes. Exemplos genéricos da skill não
+  autorizam acrescentar GraphQL, paginação, OpenAPI, banco ou código ao projeto.
+- Retomada: somente documentação. Nenhuma etapa antiga de implementação será
+  retomada; novo plano depende de pedido do usuário depois da documentação.

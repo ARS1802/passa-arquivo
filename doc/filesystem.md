@@ -1,103 +1,280 @@
-# Sistema de arquivos
+# Arquivos e pastas
 
-**Estado:** operações e isolamento do filesystem continuam planejados. Na etapa 2, o parser de configuração verifica apenas caminhos absolutos e relações lexicais entre opções, sem inspecionar o disco; isso não implementa as proteções de filesystem descritas abaixo. Requisitos do pedido estão identificados como aprovados; escolhas adicionais estão identificadas como propostas e devem ser confirmadas pela implementação e pelos testes da etapa correspondente. Consulte [progresso](progress.md), [contrato HTTP](endpoints.md), [erros](errors.md) e [configuração](configuration.md).
+A API ainda não recebe requisições nem manipula arquivos. Este guia descreve as
+regras previstas para essas operações. O comando de configuração já confere
+caminhos absolutos e compara os caminhos informados, mas não examina o disco nem
+verifica se uma pasta pode ser acessada.
 
-## Caminhos e representação das entradas
+Os parâmetros e as respostas de cada operação estão no [guia de rotas](endpoints.md).
+Veja também os [erros](errors.md), a [configuração](configuration.md) e os
+[testes](testing.md).
 
-**Requisitos aprovados:** uma única raiz configurável; caminhos públicos relativos a ela; `/` como separador; `.` como identidade da raiz. O caminho de recursos REST é transmitido em `path` na query; ações recebem os campos JSON documentados em [endpoints](endpoints.md). Caminhos absolutos, segmentos `..`, nulos e formatos ambíguos são rejeitados antes da operação principal. Espaços legítimos são preservados.
+## Como escrever um caminho
 
-**Proposta de sintaxe estrita:** validar a string resultante de uma única decodificação normal da URL. Os campos de JSON não passam por decodificação percentual. Não corrigir caminhos silenciosamente, não aplicar `trim`, não expandir `~` ou variáveis de ambiente, não normalizar Unicode. A tabela abaixo detalha a proposta de classificação:
+A pasta compartilhada é a **raiz**. Todos os caminhos usados pela API partem dela,
+usam `/` como separador e representam a própria raiz com `.`. Nas rotas de
+recursos, o caminho vai no parâmetro `path` da URL. As ações de cópia e compactação
+recebem os campos JSON descritos no [guia de rotas](endpoints.md).
 
-| Entrada após decodificação | Resultado planejado |
+Caminhos absolutos, segmentos `..`, bytes nulos e formatos ambíguos precisam ser
+recusados antes da operação. Espaços que fazem parte de nomes são preservados.
+
+As regras exatas de leitura e classificação dos caminhos ainda estão em
+definição. A tabela considera uma única decodificação da URL: `%20`, por exemplo,
+vira um espaço apenas nessa leitura. Campos JSON não passam por essa
+decodificação. Também não há correção automática do caminho, remoção de espaços
+com `trim`, expansão de `~` ou variáveis de ambiente, nem alteração da forma de
+representar caracteres Unicode.
+
+| Entrada após decodificar a URL | Resultado |
 | --- | --- |
-| `.`, `documentos`, `documentos/nota.txt` | Sintaxe permitida; ainda exige validação da entrada real |
-| `documentos/ nota final.txt ` | Espaços preservados, inclusive nas extremidades do nome |
+| `.`, `documentos`, `documentos/nota.txt` | Formato permitido; o arquivo ou a pasta ainda precisa ser verificado no disco |
+| `documentos/ nota final.txt ` | Espaços preservados, inclusive no início e no fim do nome |
 | String vazia, `documentos//nota.txt`, `documentos/`, `./documentos`, `documentos/./nota.txt` | `400 invalid_path` |
 | Qualquer byte nulo ou barra invertida em um caminho relativo | `400 invalid_path` |
 | Caminho absoluto POSIX, de unidade Windows ou UNC; qualquer segmento `..` | `403 path_forbidden` para cliente autenticado |
-| `...`, `.oculto`, `relatorio%20final.txt` | Nomes literais permitidos; `%20` remanescente não é decodificado novamente |
+| `...`, `.oculto`, `relatorio%20final.txt` | Nomes literais permitidos; `%20` restante não é decodificado novamente |
 
-Formatos reconhecidos como absolutos ou tentativas de escape têm precedência sobre a classificação de barras invertidas como sintaxe inválida. A detecção desses formatos não anuncia suporte a Windows.
+Um caminho absoluto ou uma tentativa de sair da raiz é classificado antes de
+verificar barras invertidas. Caminhos absolutos Windows são recusados na API,
+assim como os absolutos Linux. Isso é diferente de configurar uma raiz local
+com um caminho absoluto nativo no servidor Windows.
 
-Na URL, `path=documentos%2Fnota%20final.txt` representa `documentos/nota final.txt`. `path=%2E%2E%2Fsegredo` é rejeitado como escape. `path=%252E%252E%252Fsegredo` resulta no nome literal `%2E%2E%2Fsegredo`, sem uma segunda decodificação. Para um sinal `+` literal, codificar `%2B`; os exemplos devem usar `URLSearchParams` ou a opção `--data-urlencode` do cliente HTTP.
+Alguns exemplos de codificação na URL:
 
-O campo `name` de renomeação aceita exatamente um nome não vazio: exclui `.`, `..`, `/`, `\` e nulos. O campo `parentPath` segue a convenção de caminhos, inclusive `.`. Campos ausentes, tipos incorretos e opções desconhecidas seguem a validação de esquema em [erros](errors.md); um campo obrigatório ausente não equivale ao caminho vazio.
+- `path=documentos%2Fnota%20final.txt` representa `documentos/nota final.txt`.
+- `path=%2E%2E%2Fsegredo` tenta sair da raiz e é recusado.
+- `path=%252E%252E%252Fsegredo` representa o nome literal `%2E%2E%2Fsegredo`;
+  não há uma segunda decodificação.
+- Para escrever um sinal `+` no nome, use `%2B` na URL.
 
-**Plataforma planejada:** Linux. As operações devem preservar nomes UTF-8 representáveis no contrato, espaços e distinção entre maiúsculas e minúsculas quando o filesystem a oferecer. Não se promete suporte a nomes formados por bytes que não constituam UTF-8 válido, nem compatibilidade com regras de nomes de Windows ou macOS. Limites de tamanho de nome e caminho dependem do filesystem; falhas devem ser traduzidas sem expor caminhos locais. Não esconder arquivos do operador somente por começarem com ponto.
+Use `URLSearchParams` ou `curl --data-urlencode` para montar parâmetros sem
+precisar codificar cada caractere manualmente.
 
-**Metadados aprovados:** `type` é `file` ou `directory`; `size` é o tamanho em bytes de arquivo regular e `null` para diretório; não calcular tamanho recursivo. `modifiedAt` usa UTC padronizado. **Propostas:** formato ISO 8601 com sufixo `Z` e milissegundos; raiz com `name: "."` e `path: "."`. Respostas não incluem caminhos absolutos.
+Ao renomear, `name` recebe um único nome não vazio. Ele não pode ser `.`, `..`
+nem conter `/`, `\` ou bytes nulos. O campo `parentPath` segue as regras de
+caminhos, inclusive o uso de `.`. Campo obrigatório ausente e caminho vazio são
+erros diferentes. Tipos incorretos e campos desconhecidos também passam pela
+[validação da requisição](errors.md).
 
-## Raiz, tipos de entrada e isolamento
+## Nomes e informações dos arquivos
 
-**Requisitos aprovados:** resolver a raiz efetiva na inicialização; validar origem, destino e componentes intermediários; não usar comparação textual de prefixo como única proteção. A raiz nunca pode ser excluída, movida ou renomeada. Pode receber consulta de metadados, listagem, criação idempotente de diretório e compactação. Não pode ser origem de cópia no MVP.
+As plataformas alvo são Linux Mint, Ubuntu e Windows. Os nomes na API precisam
+ser representáveis em UTF-8.
+Espaços e diferenças entre maiúsculas e minúsculas são preservados quando o
+sistema de arquivos permite. Nomes começando com ponto não são escondidos só por
+esse motivo.
 
-**Proposta de preparação:** exigir raiz previamente existente e do tipo diretório. Resolver o caminho escolhido pelo operador uma vez, antes de validar a separação dos diretórios privados. Um eventual link na configuração inicial do operador determina essa raiz canônica; isso não autoriza links dentro dela. Verificar novamente a identidade da raiz quando pertinente durante operações e falhar se a estrutura necessária deixar de corresponder à configuração validada. Não criar uma raiz arbitrária devido a erro de digitação.
+Nomes feitos de bytes que não formam UTF-8 válido ficam fora do formato da API.
+As regras de nomes, maiúsculas, caminhos longos e arquivos abertos diferem entre
+Linux e Windows. O destino deve detectar nomes incompatíveis e conflitos, sem
+renomear silenciosamente ou revelar caminhos privados. Veja [Linux e Windows](platforms.md).
+macOS não faz parte do alvo atual.
 
-**Política aprovada de links simbólicos:** nenhuma operação sobre um link, mesmo quando seu destino está dentro da raiz; nenhuma travessia por componentes que sejam links; a regra inclui links quebrados e links encontrados em árvores de cópia ou ZIP. A exclusão recursiva também deve respeitar a política: não remover o link como uma exceção implícita.
+Nas respostas, `type` é `file` ou `directory`. O campo `size` informa o tamanho de
+um arquivo em bytes e vale `null` para pastas; não há cálculo de tamanho recursivo.
+`modifiedAt` usa o horário UTC. Ainda estão em definição o formato ISO 8601 com
+milissegundos e sufixo `Z`, e o uso de `name: "."` para a raiz. O caminho da raiz
+é sempre `path: "."`.
+As respostas não incluem caminhos absolutos do servidor.
 
-**Propostas verificáveis:**
+## Limites da pasta compartilhada
 
-- Examinar componentes existentes sem seguir links, validar seu tipo e avaliar a contenção por componentes do caminho e pela resolução efetiva dos ancestrais. Destinos inexistentes exigem validação do ancestral existente antes de criar os segmentos permitidos.
-- Admitir apenas arquivos regulares e diretórios; rejeitar dispositivos, sockets, FIFOs e demais tipos especiais com `403 entry_forbidden`.
-- Rejeitar com `403 entry_forbidden` uma listagem que encontre um filho simbólico ou especial. Não omitir silenciosamente entradas nem inventar um terceiro valor de `type`.
-- Rejeitar arquivos regulares com mais de um hard link detectável (`nlink > 1`), inclusive em percursos recursivos, com `403 entry_forbidden`. Isso reduz a exposição de um mesmo arquivo por nomes internos e externos; não prova isolamento contra criação concorrente de links.
-- Restringir o MVP a um filesystem local; rejeitar uma travessia detectada para dispositivo diferente com `409 cross_device_operation`. A relação de origem e destino deve considerar identidade real, quando disponível, além dos segmentos textuais.
+A inicialização precisa descobrir a localização real da raiz. Cada operação
+confere origem, destino e as pastas entre eles e a raiz. Comparar apenas o início
+de duas strings não basta para saber se um caminho está dentro de outro.
 
-Essas verificações não identificam todas as configurações de montagem: bind mounts podem expor a mesma entrada por nomes diferentes sem alterar o dispositivo. A operação planejada pressupõe uma raiz sem montagens internas administradas por processos não confiáveis. Uma detecção adicional de montagens permanece uma decisão técnica a revisar antes da etapa 3; não existe isolamento de montagem implementado. `realpath` não fornece identidade única para hard links ou bind mounts, conforme a [documentação de filesystem do Node.js](https://nodejs.org/docs/latest-v24.x/api/fs.html#fspromisesrealpathpath-options).
+A raiz pode ser consultada, listada e compactada. Pedir a criação de `.` devolve
+a pasta existente, sem apagar seu conteúdo. A raiz não pode ser excluída, movida,
+renomeada ou usada como origem de uma cópia nesta versão.
 
-Estado privado, credenciais, chaves e staging devem ficar fora da raiz efetiva e não ser alcançáveis por links ou aliases configurados pelo operador. A proposta é rejeitar sobreposição entre raiz, diretórios privados e repositório quando expuser arquivos internos, verificando relações de ancestralidade nos dois sentidos. Não usar uma lista de nomes ocultos como mecanismo principal de proteção. Consulte [configuração](configuration.md) para as restrições exatas desses diretórios.
+A preparação da raiz ainda está em definição. O comportamento considerado exige
+que ela já exista e seja uma pasta, evitando criar uma pasta errada por causa de
+um erro de digitação. Seu caminho real seria resolvido antes de conferir a
+separação dos diretórios privados. Um link no caminho escolhido pelo
+administrador poderia determinar essa localização inicial, mas não liberaria
+links dentro da raiz. As operações também precisariam detectar mudanças na
+identidade da raiz que invalidassem essa configuração.
 
-## Comportamento das operações
+### Links e tipos de arquivo
 
-A tabela sintetiza os **requisitos aprovados**, ainda planejados. Status, campos e exemplos completos constam em [endpoints](endpoints.md).
+Um link simbólico é uma referência para outro caminho. Nenhuma operação pode
+seguir ou agir sobre esses links, mesmo que apontem para dentro da raiz. Isso
+vale para links quebrados, pastas intermediárias e links encontrados durante
+cópia, ZIP ou exclusão recursiva. A exclusão não abre uma exceção para remover
+o próprio link.
 
-| Operação | Efeito planejado e conflitos |
+No Windows, a verificação também precisa considerar junctions e outros reparse
+points que redirecionem acesso. A proteção não pode depender apenas de uma
+checagem de links feita como no Linux; os mecanismos por plataforma ainda
+precisam ser definidos e verificados.
+
+Os detalhes de verificação abaixo ainda estão em definição:
+
+- Cada parte existente do caminho seria examinada sem seguir links, conferindo
+  seu tipo e sua localização real. Um destino novo exigiria a conferência da
+  pasta ancestral existente antes de criar as partes permitidas.
+- Somente arquivos regulares e pastas seriam aceitos. Dispositivos, sockets,
+  FIFOs e outros arquivos especiais receberiam `403 entry_forbidden`.
+- A listagem inteira seria recusada com `403 entry_forbidden` se um filho fosse
+  um link simbólico ou arquivo especial. A resposta não ocultaria esses itens
+  nem criaria um terceiro valor de `type`.
+- Arquivos com mais de um hard link detectável (`nlink > 1`) seriam recusados,
+  inclusive em operações recursivas, com `403 entry_forbidden`. Um hard link é
+  outro nome para o mesmo arquivo. Essa checagem reduz o risco de expor um arquivo que
+  também tenha um nome fora da raiz, mas não impede que outro processo crie
+  um link enquanto a operação ocorre.
+- As operações ficariam em um único sistema de arquivos local; a passagem
+  detectada para outro dispositivo resultaria em `409 cross_device_operation`.
+  A comparação entre origem e destino também consideraria a identidade real das entradas, quando
+  disponível, além dos nomes dos caminhos.
+
+Essas verificações não detectam todas as montagens. Um *bind mount*, por exemplo,
+pode mostrar a mesma pasta em outro caminho sem mudar seu dispositivo. O uso do
+servidor pressupõe que programas não confiáveis não administrem montagens dentro
+da raiz. A detecção adicional de montagens ainda está em definição; não há
+isolamento de montagens implementado. `realpath` também não identifica de forma
+única hard links ou bind mounts, como explica a
+[documentação de arquivos do Node.js](https://nodejs.org/docs/latest-v24.x/api/fs.html#fspromisesrealpathpath-options).
+
+### Pastas privadas
+
+Estado do servidor, credenciais, chaves e staging precisam ficar fora da raiz
+real e não podem ser alcançados por links ou outros caminhos configurados pelo
+administrador. Staging é a área temporária usada para preparar arquivos antes
+de colocá-los no destino.
+
+A verificação física de sobreposição com o repositório e as pastas privadas ainda
+está em definição. Ela precisa considerar os dois sentidos: tanto uma pasta
+privada dentro da raiz quanto a raiz dentro de uma pasta privada podem expor
+arquivos internos. Uma lista de nomes ocultos não oferece essa proteção. As
+restrições das opções estão no [guia de configuração](configuration.md).
+
+## O que cada operação faz
+
+O [guia de rotas](endpoints.md) traz os parâmetros, respostas e exemplos completos.
+
+| Operação | Comportamento e conflitos |
 | --- | --- |
-| Metadados | Consulta arquivo regular ou diretório, inclusive a raiz; ausência resulta em `404` |
-| Listagem | Somente filhos imediatos; diretórios antes de arquivos; sem recursão ou paginação; proposta de ordem nominal: comparação lexicográfica dos bytes UTF-8, sensível a caixa e independente de locale |
-| Download | Apenas arquivo regular; streaming; nome seguro em `Content-Disposition`; tipo de conteúdo apropriado ou `application/octet-stream`; diretório não vira ZIP automaticamente |
-| Upload | Exatamente uma parte de arquivo `file`; `path` determina destino completo; pai existente obrigatório; conteúdo novo em staging; cria arquivo com `201` ou substitui arquivo regular com `204`; diretório no destino resulta em `409` |
-| Criação de diretório | Cria pais ausentes; novo diretório resulta em `201`; diretório já existente, inclusive `.`, resulta em `200` e preserva conteúdo; arquivo em componente necessário resulta em `409` |
-| Exclusão | Exclui arquivo ou diretório vazio; diretório não vazio exige `recursive=true`, senão `409`; raiz proibida; sucesso `204`, ausência `404` |
-| Renomeação e movimentação | `name` e/ou `parentPath`; destino pai existente; ambos os campos compõem uma única operação; omissão preserva valor atual; sem mudança efetiva resulta em `200`; não move raiz nem diretório para descendente |
-| Cópia | Destino é caminho final completo, com pai existente; não acrescenta nome automaticamente; não copia raiz, mesma entrada ou diretório para descendente; cria com `201`; substituição permitida de arquivo resulta em `200` |
-| Compactação | Apenas diretório, inclusive raiz; ZIP em streaming sem buffer integral; nomes relativos ao diretório solicitado; preserva diretórios vazios; não cria ZIP permanente ou job persistente |
+| Metadados | Consulta informações de arquivo regular ou pasta, inclusive a raiz; ausência resulta em `404` |
+| Listagem | Mostra somente filhos imediatos, com pastas antes de arquivos, sem percorrer subpastas e sem paginação |
+| Download | Envia somente arquivo regular, aos poucos, sem carregá-lo inteiro na memória; usa nome seguro em `Content-Disposition` e tipo de conteúdo apropriado ou `application/octet-stream`; uma pasta não vira ZIP automaticamente |
+| Upload | Recebe exatamente uma parte de arquivo chamada `file`; `path` define o destino completo, cujo pai precisa existir; prepara o conteúdo em staging; cria com `201` ou substitui arquivo regular com `204`; pasta no destino resulta em `409` |
+| Criação de pasta | Cria pais ausentes; nova pasta resulta em `201`; pasta já existente, inclusive `.`, resulta em `200` e mantém o conteúdo; arquivo em um componente necessário resulta em `409` |
+| Exclusão | Exclui arquivo ou pasta vazia; pasta não vazia exige `recursive=true`, senão retorna `409`; raiz proibida; sucesso `204`, ausência `404` |
+| Renomeação e movimentação | Aceita `name` e/ou `parentPath`, com pai de destino existente; os dois campos formam uma única operação; um campo omitido mantém seu valor atual; sem mudança, retorna `200`; não move a raiz nem uma pasta para dentro de si mesma |
+| Cópia | Recebe o caminho final completo, com pai existente; não acrescenta o nome de origem automaticamente; não copia a raiz, uma entrada sobre si mesma ou uma pasta para dentro de si mesma; cria com `201`; substituição permitida de arquivo resulta em `200` |
+| Compactação | Recebe somente pasta, inclusive a raiz; envia ZIP aos poucos, sem guardá-lo inteiro na memória; usa nomes relativos à pasta solicitada e preserva pastas vazias; não cria ZIP permanente nem tarefa persistente |
 
-**Sobrescrita aprovada:** upload substitui conteúdo deliberadamente; a substituição de destino existente em movimentação ou cópia exige `overwrite=true`, cujo padrão é `false`. Somente arquivo regular pode substituir arquivo regular. Não substituir diretório, mesclar árvores nem remover previamente o destino para tentar copiar em seguida. Nunca remover um ancestral que contenha a própria origem. Propostas de erro: modificação proibida da raiz resulta em `403 entry_forbidden`; mover diretório para descendente ou copiar para a mesma entrada/descendente resulta em `422 validation_failed`. PATCH para a identidade atual permanece `200`, sem alteração.
+A ordem dos nomes na listagem ainda está em definição: comparação dos bytes
+UTF-8, em ordem lexicográfica, diferenciando maiúsculas de minúsculas e sem
+depender do idioma configurado no sistema.
 
-Repetir criação de diretório não esvazia seu conteúdo. Repetir upload mantém o conteúdo solicitado, embora metadados possam mudar. Uma segunda exclusão pode produzir `404` depois do primeiro `204`: idempotência descreve o efeito final pretendido, não a igualdade das respostas. Repetir cópia sem sobrescrita pode encontrar o destino criado e resultar em conflito.
+### Substituir e repetir operações
 
-## Staging, publicação e limpeza
+Upload substitui o conteúdo do arquivo de destino. Para mover ou copiar sobre
+um arquivo existente, é preciso informar `overwrite=true`; o padrão é `false`.
+Somente um arquivo regular pode substituir outro arquivo regular. Não há
+substituição de pastas nem junção de árvores de diretórios. O destino não é
+removido antes de preparar a cópia, e uma pasta que contém a própria origem não
+pode ser removida para abrir espaço.
 
-**Requisitos aprovados:** upload e cópia devem preservar o destino anterior quando houver falha antes da publicação. Receber/processar por streaming em staging privado, validar por completo e só então publicar. A limpeza só pode remover temporários pertencentes à própria operação. Desconexão deve cancelar streams e limpar recursos. Temporários não podem aparecer em listagem, download, cópia ou ZIP da raiz.
+Os códigos para algumas recusas ainda estão em definição: `403 entry_forbidden`
+ao tentar modificar a raiz de forma proibida; `422 validation_failed` ao mover
+uma pasta para dentro de si mesma ou copiar uma entrada sobre si mesma ou para
+um descendente. Um PATCH que mantém o nome e a localização atuais retorna `200`
+sem alteração.
 
-**Proposta de publicação:** staging externo à raiz, configurado no mesmo filesystem do destino, com diretórios privados de modo `0700` e arquivos privados de modo `0600`. Cada operação recebe um espaço próprio criado de modo exclusivo e não previsível. Verificar origem, pai, tipo e conflito novamente antes de publicar. Uma cópia de diretório é montada integralmente em staging antes de publicar o novo nome; o destino anterior não é removido antecipadamente.
+Repetir a criação de uma pasta não esvazia seu conteúdo. Repetir um upload mantém
+o conteúdo solicitado, embora informações como a data de modificação possam
+mudar. Uma segunda exclusão pode retornar `404` depois do primeiro `204`.
+Isso ainda é idempotência: repetir o pedido mantém o mesmo efeito final, mas não
+precisa gerar a mesma resposta. Repetir uma cópia sem permitir substituição pode
+encontrar o destino já criado e resultar em conflito.
 
-A escolha da primitiva de publicação e seus testes pertence às etapas 5 e 7. Não tratar uma checagem prévia de existência seguida de renomeação como garantia de não sobrescrever diante de processos externos. Rejeitar `EXDEV` com `409 cross_device_operation`; não executar cópia seguida de exclusão como fallback de movimentação. Se a localização configurada de staging já impossibilitar publicação, falhar na preparação com diagnóstico local sanitizado.
+## Preparar, salvar e limpar arquivos
 
-Após publicação bem-sucedida, uma falha na entrega da resposta não desfaz o conteúdo publicado. Na interrupção anterior à publicação, descartar apenas o novo staging e manter o arquivo anterior. Encerramento normal deve aguardar/cancelar operações conforme [configuração](configuration.md). Encerramento abrupto ou falha do sistema pode deixar temporários; eventual limpeza na próxima preparação deve se restringir a espaços comprovadamente criados pelo servidor. Não apagar genericamente o diretório temporário do operador.
+Upload e cópia precisam preservar o destino anterior se algo falhar antes de
+colocar o novo conteúdo no lugar. O arquivo é recebido ou preparado aos poucos
+em staging privado, conferido por completo e só então publicado no destino.
+Temporários não podem aparecer na listagem, no download, na cópia ou no ZIP da
+pasta compartilhada.
 
-**Compactação:** limites de quantidade de entradas e volume são configuráveis. **Proposta:** contar cada arquivo e diretório descendente, incluindo diretórios vazios; o diretório solicitado é o contêiner e não conta como uma entrada extra. Volume é a soma dos bytes não comprimidos efetivamente lidos dos arquivos, não o tamanho final do ZIP. Contadores devem ser aplicados durante o processamento, mesmo após uma estimativa prévia. Limite excedido antes dos headers resulta em `413 payload_too_large`; depois dos headers, abortar a transferência conforme [erros](errors.md). Descartar staging eventualmente utilizado após sucesso, falha ou desconexão. Seleção da biblioteca e estratégia de preparação ficam para a etapa 7.
+Os detalhes dessa preparação ainda estão em definição: staging fora da raiz e
+no mesmo sistema de arquivos do destino. No Linux, pastas de permissão `0700`
+e arquivos `0600`; no Windows, ACLs que protejam o mesmo conjunto de dados.
+Cada operação teria uma área exclusiva, com nome
+imprevisível. Antes de publicar, seriam conferidos novamente origem, pai, tipo
+de entrada e possíveis conflitos. Uma cópia de pasta seria montada inteira em
+staging antes de receber o nome final, sem apagar o destino antecipadamente.
 
-## Concorrência e alcance das garantias
+A operação do sistema usada para publicar o arquivo ainda não foi escolhida.
+Conferir se um nome existe e depois renomear um arquivo não garante que outro
+programa não crie algo nesse intervalo. Uma falha `EXDEV`, que indica a tentativa
+de cruzar sistemas de arquivos, corresponde a `409 cross_device_operation`.
+Movimentação não é substituída automaticamente por cópia seguida de exclusão.
+Se o local configurado para staging impossibilitar a publicação, a preparação
+precisa falhar com uma mensagem local sem dados sensíveis.
 
-**Requisito aprovado:** um único processo; nenhuma exigência de múltiplos workers. **Proposta:** serializar trechos de mutação e de validação/publicação conflitantes com exclusão mútua dentro do processo; uma solução simples por raiz é preferível inicialmente. Receber um upload em staging não deve modificar seu destino antecipadamente. A estratégia de concorrência das leituras e árvores será verificada junto das respectivas operações.
+Se a conexão cair antes da publicação, a operação cancela as transferências,
+descarta somente seus próprios temporários e mantém o destino anterior. Depois
+da publicação, falhar ao entregar a resposta não desfaz o arquivo já salvo.
 
-Operações assíncronas de filesystem não se tornam sincronizadas apenas porque usam Promises. Verificação prévia e operação posterior deixam uma janela para alteração externa; recursos como abertura sem seguir o link final e inspeção do descritor podem reduzir riscos específicos, mas não demonstram proteção completa dos ancestrais. Essas limitações são descritas pela [documentação do Node.js](https://nodejs.org/docs/latest-v24.x/api/fs.html#promises-api).
+O encerramento normal espera ou cancela operações conforme a
+[configuração](configuration.md). Uma queda abrupta pode deixar temporários.
+Uma limpeza posterior só pode apagar áreas comprovadamente criadas pelo próprio
+servidor, sem esvaziar pastas temporárias do administrador nem remover arquivos
+de outras operações.
 
-O contrato planejado não oferece snapshot de toda uma árvore, proteção absoluta contra outros processos, transação entre vários arquivos ou durabilidade após queda de energia. Uma publicação de nome no mesmo filesystem pode ter garantias diferentes de uma operação recursiva; elas só serão anunciadas após validação da primitiva e da plataforma utilizadas.
+### Limites do ZIP
 
-| Situação | Limitação planejada |
+A quantidade de entradas e o volume do ZIP têm limites configuráveis. A forma
+exata de contar ainda está em definição: cada arquivo e pasta descendente conta
+como uma entrada, inclusive pastas vazias; a pasta solicitada funciona como o
+contêiner e não conta novamente. O volume é a soma dos bytes lidos dos arquivos
+antes da compressão, e não o tamanho final do ZIP.
+
+Os limites precisam ser conferidos durante a leitura, mesmo que exista uma
+estimativa anterior. Se o limite for excedido antes dos headers, a resposta é
+`413 payload_too_large`. Depois de começar a resposta, a transferência é
+interrompida, conforme o [guia de erros](errors.md). Staging eventualmente usado
+precisa ser descartado em caso de sucesso, falha ou desconexão. A biblioteca de
+ZIP e a forma de preparar o arquivo ainda não foram escolhidas.
+
+## Operações ao mesmo tempo e falhas parciais
+
+O servidor usa um único processo, sem exigir múltiplos workers. A coordenação
+das operações ainda está em definição. Uma possibilidade é usar um mutex por
+raiz: uma trava dentro do programa para que alterações conflitantes, incluindo
+a conferência final e a publicação, esperem umas pelas outras. Receber um upload
+em staging não altera seu destino antes da hora. A coordenação das leituras e
+das operações que percorrem pastas também precisa ser definida.
+
+Usar Promises não faz as operações esperarem automaticamente umas pelas outras.
+Entre conferir um caminho e usá-lo, outro programa pode alterá-lo. Abrir um
+arquivo sem seguir o último link e conferir o arquivo já aberto reduz alguns
+riscos, mas não protege todas as pastas anteriores. A
+[documentação do Node.js](https://nodejs.org/docs/latest-v24.x/api/fs.html#promises-api)
+explica essas limitações das operações assíncronas.
+
+Não há garantia de uma visão congelada de toda a pasta durante a leitura,
+isolamento completo de outros programas, transação que altere vários arquivos
+de uma só vez ou preservação após queda de energia. Trocar um nome no mesmo
+sistema de arquivos tem características diferentes de percorrer uma árvore;
+as garantias exatas dependem da operação e da plataforma usadas e ainda precisam
+ser verificadas.
+
+| Situação | Limitação |
 | --- | --- |
-| Upload/cópia falha antes de publicar | Destino anterior preservado; staging próprio removido quando o processo consegue executar a limpeza |
-| Criação de vários diretórios pais falha | Pais já criados podem permanecer; não remover diretórios que possam ter recebido conteúdo |
-| Exclusão recursiva falha | Algumas entradas podem já ter sido excluídas; não existe rollback ou lixeira |
-| Download/ZIP durante escrita externa | Não há promessa de snapshot; detectar falhas quando possível e encerrar transferência |
-| Processo externo altera links/nomes/montagens | Mutex da aplicação não oferece proteção contra esse processo |
-| Falha após publicação ou resposta iniciada | Não garantir reversão; não trocar resposta já iniciada por JSON |
+| Upload ou cópia falha antes de publicar | Destino anterior preservado; temporários próprios removidos quando o processo consegue executar a limpeza |
+| Criação de várias pastas pais falha | Pais já criados podem permanecer; não é seguro remover pastas que possam ter recebido conteúdo |
+| Exclusão recursiva falha | Algumas entradas podem já ter sido excluídas; não há desfazer automático nem lixeira |
+| Download ou ZIP durante escrita externa | Não há uma visão congelada dos dados; falhas detectadas podem encerrar a transferência |
+| Outro processo altera links, nomes ou montagens | A trava interna da aplicação não impede essas alterações |
+| Falha após salvar o arquivo ou começar a resposta | Não há garantia de reversão; uma resposta já iniciada não pode ser trocada por JSON |
 
-O operador precisa manter a raiz e seus ancestrais sob controle confiável para esse modelo. Não oferecer este MVP como sandbox contra usuários locais hostis. Filesystems de rede, diferenças de montagem e outras plataformas exigem verificações próprias antes de anunciar suporte.
-
-## Verificações previstas
-
-Ainda não executadas: caminhos relativos/absolutos/codificados; nulos e espaços; raiz; links diretos, intermediários e recursivos; entradas especiais e hard links; destinos existentes; ancestrais/descendentes; conflitos concorrentes dentro do processo; interrupção de upload; preservação do destino; ZIP com diretórios vazios e limites; limpeza e falhas parciais. Usar somente diretórios temporários exclusivos, nunca dados reais do operador. A matriz e o estado de execução ficam em [testes](testing.md).
+O administrador precisa controlar quem altera a raiz e as pastas acima dela.
+O projeto não é uma barreira contra usuários locais mal-intencionados.
+Sistemas de arquivos de rede, outras configurações de montagem e outras
+plataformas precisam de verificações próprias antes de serem considerados
+compatíveis.

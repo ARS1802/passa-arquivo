@@ -1,31 +1,28 @@
-# Verificações e testes
+# Testes
 
-## Estado e limites de cobertura
+Os testes disponíveis conferem as opções de configuração e o comportamento do
+comando de terminal. Também verificam que criar a aplicação Express não abre uma
+porta de rede. A API ainda não tem rotas, autenticação, operações de arquivos ou
+conexões HTTPS para testar. O manifesto e os caminhos atuais ainda são
+específicos de Linux. Os testes existentes não comprovam suporte a Windows,
+TOFU, mTLS ou persistência de peers.
 
-**Etapa 2: estrutura e configuração verificadas.** Existem manifesto e lock,
-compilação TypeScript, fábrica Express sem rotas, parser Zod e comando local de
-conferência. Foram executados 46 testes de configuração/bootstrap. Ainda não há
-testes de endpoints, autenticação, operações de arquivos ou conexões HTTPS reais.
+## Executar as verificações
 
-O resultado atual está registrado abaixo e em [progress.md](progress.md).
-As verificações da etapa 1 são um registro histórico; a matriz diferencia o
-conjunto de configuração executado dos conjuntos ainda planejados.
-
-## Execução e resultados da etapa 2
-
-Ambiente: **Linux x86_64, Node.js 24.19.0, npm 11.17.0**, TypeScript 7.0.2.
-Data: **2026-09-06**. Node.js 24 já estava instalado e foi selecionado somente
-nos comandos; a versão padrão do terminal não foi modificada.
-
-Com o runtime de `.nvmrc` selecionado e a partir da raiz do projeto:
+Na raiz do projeto, use Node.js **24.19.0**, indicado em [.nvmrc](../.nvmrc), e
+npm **11.17.0**. Se usa nvm e essa versão está instalada, selecione-a com `nvm use`.
+Depois:
 
 ```sh
 npm ci
 npm run check
 ```
 
-`npm ci` é preparação do ambiente com o lock, não parte de cada inicialização.
-Para executar uma verificação isolada, após a instalação:
+`npm ci` instala as dependências nas versões salvas no lock. Não é necessário
+reinstalá-las a cada execução dos testes. `npm run check` confere os tipos, compila
+o projeto e executa a suíte, nessa ordem.
+
+Para executar somente uma dessas verificações:
 
 ```sh
 npm run typecheck
@@ -33,162 +30,190 @@ npm run build
 npm test
 ```
 
-`check` executa os três comandos em sequência. `typecheck` verifica produção e
-testes sem emitir JavaScript; `build` compila produção para `dist/`; `test` compila
-produção/testes em `.test-build/` e usa `node --test`. Artefatos e dependências são
-ignorados pelo Git. Os diretórios de saída não constituem dados compartilhados.
+| Comando | O que verifica | Arquivos gerados |
+| --- | --- | --- |
+| `npm run typecheck` | Tipos do código de produção e dos testes. | Nenhum. |
+| `npm run build` | Compilação dos arquivos de `src/`. | JavaScript e mapas de origem em `dist/`. |
+| `npm test` | Compilação do código e dos testes, seguida da execução com `node --test`. | Arquivos em `.test-build/`. |
 
-| Verificação executada | Resultado |
-| --- | --- |
-| `npm install` inicial | 82 pacotes instalados localmente; manifesto e lock criados |
-| `npm exec -- tsc --version` e `npm ls --depth=0` | Compilador 7.0.2 executável; cinco dependências diretas nas versões documentadas |
-| `npm run check` | Tipos e compilação aprovados; **46 testes passaram, zero falhas e zero ignorados** |
-| `npm ci` para conferir reprodução | Concluído sem modificar o lock, verificado por SHA-256 antes/depois; auditoria npm relatou zero vulnerabilidades na consulta |
-| `npm run check:config` com os três diretórios de exemplo do README | Código 0 e mensagem explícita de validação somente sintática/lexical, sem inicializar servidor |
-| Revisão documental e inventário final | 26 arquivos autorais, 14 documentos, 125 links/âncoras locais válidos; sintaxe de 18 exemplos shell e 5 JSON conferida; 16 opções, cinco exports públicos e manifesto/lock coerentes |
-| Exclusões Git | Dependências, builds e nomes de materiais privados conferidos com `git check-ignore`; nenhum segredo de execução criado |
+`dist/`, `.test-build/` e `node_modules/` são ignorados pelo Git. Eles não são pastas
+de arquivos compartilhados. Os comandos e suas definições ficam no
+[package.json](../package.json).
 
-Uma dúvida levantada na revisão de regex também foi conferida diretamente no runtime:
-as seis combinações de PORT/SAN com LF, CRLF ou CR finais foram rejeitadas, conforme
-o contrato. Essa conferência pontual não alterou código ou a contagem dos 46 testes.
+## O que os testes atuais cobrem
 
-O lock permaneceu com SHA-256
-`fb814c5e410adda42e310e19a2e7efe158e0cf6d00fd38cc7578c82559e196f6` nessa verificação.
-O resultado da auditoria npm é pontual e não equivale a uma garantia geral de segurança.
+### Valores de configuração
 
-### Conjuntos implementados
+[tests/config.test.ts](../tests/config.test.ts) chama `loadConfig` com argumentos
+e variáveis de ambiente preparados para cada caso. Nenhum desses caminhos é
+aberto no disco. O arquivo verifica:
 
-- [tests/config.test.ts](../tests/config.test.ts): **42 testes**, incluindo campos
-  obrigatórios, os 16 pares CLI/ambiente, defaults, precedência e substituição de
-  listas, opções desconhecidas/duplicadas, limites e formatos numéricos, JSON,
-  caminhos absolutos/colisões lexicais, modos TLS e caminhos de materiais, SAN/IP,
-  CORS canônico, imutabilidade e ausência de valores privados em diagnósticos.
-- [tests/bootstrap.test.ts](../tests/bootstrap.test.ts): **4 testes** em subprocessos;
-  sucesso do comando sem criar diretórios, erros com saída 2 sem eco de valores,
-  opção desconhecida sanitizada e importação/montagem Express sem listener ou
-  processo mantido ativo. Somente o teste de ausência de criação usa diretório
-  temporário exclusivo, removido após o caso; outros caminhos são apenas strings.
+- As três pastas obrigatórias, os valores padrão e as 16 opções por argumentos
+  e variáveis de ambiente.
+- A preferência de argumentos sobre variáveis e padrões, inclusive quando o
+  valor substituído está inválido, e a substituição de listas inteiras.
+- Argumentos desconhecidos, repetidos ou sem valor; variáveis `PASSA_`
+  desconhecidas; números e listas JSON em formatos inválidos.
+- Os menores e maiores valores numéricos permitidos e a rejeição de valores fora
+  dos limites.
+- Caminhos absolutos, simplificação de `.` e `..`, preservação de espaços e
+  separação entre as pastas e os caminhos de certificado, chave e tokens.
+- Os modos de certificado, os nomes e IPs do servidor, as identidades SAN e as
+  origens CORS.
+- A proteção do objeto de configuração e de suas listas contra alteração, sem
+  modificar os dados recebidos.
+- Mensagens de erro sem expor os valores privados usados nos testes.
 
-As verificações não leem a pasta do operador nem geram tokens/certificados. O parser
-é puro, então aceitar um caminho configurado não comprova existência, acesso,
-propriedade, ausência de symlink, filesystem ou relação física com o repositório.
-Os testes de TLS/SAN desta etapa verificam valores de configuração, não handshakes
-ou certificados reais. O ramo de falha inesperada com saída 1 na CLI está implementado,
-mas não foi exercitado por injeção artificial de falha.
+### Comando de terminal e aplicação
 
-Fonte do mecanismo de execução: [test runner do Node.js 24](https://nodejs.org/docs/latest-v24.x/api/test.html).
+[tests/bootstrap.test.ts](../tests/bootstrap.test.ts) inicia processos separados
+para observar como o programa termina e o que escreve no terminal. Ele verifica:
 
-## Verificação documental da etapa 1
+- Configuração aceita com saída `0`, sem criar as pastas informadas e com mensagem
+  clara de que não houve leitura de arquivos nem início de servidor.
+- Configuração inválida com saída `2`, sem repetir valores privados ou caminhos.
+- Opção desconhecida rejeitada sem publicar o nome ou o valor recebido.
+- Importação da configuração e criação da aplicação Express sem abrir uma porta
+  ou manter o processo ativo.
 
-Procedimentos da revisão, sem dependências adicionais do projeto:
+O teste de criação de pastas usa uma pasta temporária exclusiva e a remove ao
+terminar. Os demais caminhos são somente textos de configuração. Nenhum teste
+usa a pasta real de arquivos de quem executa o projeto ou gera tokens e
+certificados de produção.
 
-1. Conferir os 13 arquivos obrigatórios: `README.md`, `AGENTS.md` e os 11 documentos
-   obrigatórios em `doc/`. Conferir também a cópia adicional `doc/requirements.md`.
-2. Comparar a cópia da especificação com o anexo recebido, preservando seu conteúdo.
-3. Verificar destinos de links Markdown locais, fechamento de blocos de código,
-   espaços ao fim de linha e arquivos autorais com quebra de linha final. A cópia
-   literal do pedido conserva a formatação original, inclusive ausência de newline
-   final; sua verificação é por igualdade integral de bytes com o anexo.
-4. Conferir as dez combinações método/rota e as regras da especificação contra
-   `endpoints.md`, `filesystem.md`, `security.md`, `configuration.md` e `errors.md`.
-5. Revisar a distinção entre requisito aprovado, proposta e comportamento implementado;
-   referências a handlers/símbolos inexistentes devem ser explicitamente pendentes.
-6. Conferir as nove etapas, limite da autorização atual e estado de pausa final.
-7. Revisar inventário/diff para confirmar que a entrega contém somente documentação.
+## O que esses testes não comprovam
 
-Comandos de inspeção que podem ser utilizados no repositório:
+Aceitar um caminho não prova que ele existe, pode ser acessado, pertence ao usuário
+correto ou está separado fisicamente de outro caminho. Os testes atuais não
+verificam permissões, links simbólicos, discos ou a localização real do repositório.
+
+Da mesma forma, conferir um nome ou IP em `tls-sans` não testa uma conexão HTTPS.
+Não há testes de certificados reais, confiança bilateral, mTLS, pareamento
+ou transferências. O caminho de saída `1` da CLI para uma falha inesperada existe
+no código, mas não tem um teste que provoque essa falha.
+
+`npm test` executa apenas os arquivos de teste existentes. Um resultado sem falhas
+não significa que toda a API esteja pronta.
+
+## Conferir alterações na documentação
+
+A revisão de um guia deve confirmar que os caminhos de arquivos, links, nomes de
+funções e comandos correspondem ao projeto. Os exemplos também precisam manter
+blocos de código fechados, JSON válido e sintaxe de terminal correta.
+
+Estes comandos ajudam a identificar arquivos alterados e problemas de espaços:
 
 ```sh
 git status --short --branch
-rg --files --hidden -g '!.git' -g '!node_modules'
+rg --files --hidden -g '!.git' -g '!node_modules' -g '!dist' -g '!.test-build'
 git diff --check
 ```
 
-`git diff --check` cobre alterações rastreadas; como a etapa inicial cria arquivos
-ainda não rastreados, a revisão também deverá ler os novos Markdown diretamente ou
-usar `git diff --no-index --check /dev/null CAMINHO_DO_DOCUMENTO` para cada arquivo.
-Não executar comandos de instalação ou testes de aplicação para completar esta etapa.
+`git diff --check` não inclui arquivos novos que ainda não foram adicionados ao
+Git. Eles também precisam ser lidos na revisão. É possível conferir somente a
+sintaxe de um exemplo shell com `sh -n`, sem executá-lo; isso não prova que seu
+resultado esteja correto.
 
-Resultado em 2026-09-05: **revisão documental aprovada**.
+Ao revisar uma rota, compare seus parâmetros, respostas e exemplos com o código e
+os testes correspondentes. Quando a funcionalidade ainda não existir, o guia deve
+dizer isso de forma direta.
 
-- Os 13 documentos obrigatórios e a cópia adicional da especificação estavam presentes;
-  o inventário daquela etapa continha somente esses 14 arquivos Markdown, além de `.git`.
-- A especificação foi comparada byte a byte com o anexo e está idêntica.
-- Links locais e âncoras foram resolvidos; os 13 arquivos autorais passaram nas
-  verificações de UTF-8, blocos fechados, newline final, espaços finais e diff.
-- 14 blocos shell tiveram sintaxe verificada por `sh -n`, sem executar seu conteúdo;
-  5 blocos JSON foram analisados com sucesso. Nenhum comando curl ou npm dos exemplos
-  foi executado.
-- As dez combinações método/rota e as categorias documentais por endpoint foram
-  conferidas; as nove etapas estão registradas na ordem do pedido.
-- Revisão cruzada de requisitos/contrato/configuração/erros/segurança foi realizada.
-  Foram alinhados limite JSON e erro 413, alcance da rejeição de duplicatas e
-  exigência de `overwrite` somente para substituição de destino existente.
-- As verificações mecânicas utilizaram um script temporário em memória, com a
-  biblioteca padrão de Python 3, `rg`, `sh -n` e `git diff --no-index --check`.
-  Não foi criado script executável no projeto nem instalada ferramenta adicional.
+## Cobertura necessária para as funcionalidades que faltam
 
-A inspeção inicial do Git/diretório também foi executada e confirmou somente `.git`,
-sem commits nem arquivos de aplicação. Na etapa 1 não foram executados testes
-funcionais, compilação, instalação ou conexões HTTPS. O avanço da etapa 2 consta
-separadamente acima.
+Os casos abaixo ainda não têm testes implementados. Eles descrevem resultados
+que precisarão ser conferidos junto das funcionalidades correspondentes.
 
-## Matriz de testes planejados
+### Acesso e caminhos
 
-O conjunto da **etapa 2 está implementado e executado** no alcance descrito acima.
-Os conjuntos das **etapas 3–9 ainda não foram implementados ou executados**.
-Cada conjunto entra na etapa correspondente e deve ser mantido após alterações.
+| Área | Casos necessários |
+| --- | --- |
+| Identidade local | Chaves distintas por instalação; persistência após reinício e atualização; ausência de chave privada no tráfego, nas respostas e nos logs. |
+| Proteção das rotas | Peers desconhecidos não acessam arquivos nem `/health`; falta de certificado ou confiança causa recusa TLS antes do HTTP quando aplicável; contexto de pareamento isolado. |
+| Caminhos recebidos | Raiz `.`, nomes com espaços e caracteres especiais, caminhos absolutos, `..`, bytes nulos, barras repetidas ou finais e campos inválidos; decodificação da URL somente uma vez. |
+| Links e áreas privadas | Links no destino ou em pastas intermediárias, inclusive em operações recursivas; arquivos privados nunca acessíveis pela API. |
 
-| Etapa | Conjunto | Comportamento observável a verificar |
-| --- | --- | --- |
-| 2 | Estrutura e configuração — executado | Instalação local com lock; compilação/tipos; opções ausentes, inválidas, limites numéricos, listas e precedência CLI/ambiente/default; relações lexicais de caminhos; importação sem iniciar escuta |
-| 3 | Autenticação isolada | Tokens ausentes, inválidos e válidos; preparação segura de tokens temporários/externos, ciclo de vida e comparação; mensagens/logs sem credenciais |
-| 3 | Caminhos | Raiz `.`, caminhos válidos, absolutos, `..`, nulos, barras repetidas/finais, nomes com espaços/especiais, representação URL decodificada uma vez, campos inválidos, symlinks diretos/intermediários, arquivos privados inacessíveis |
-| 4 | Autenticação em rotas | Proteger `/health` e cada rota de consulta; validar 401 e `WWW-Authenticate`; acrescentar verificação de cada nova rota nas etapas 5–7 |
-| 4 | Saúde e metadados | 200 mínimo autenticado, representação comum camelCase, raiz sem caminho absoluto, `size: null` para diretórios, bytes para arquivos, UTC e 404 |
-| 4 | Listagem | Somente filhos imediatos, raiz default, grupos/ordenação determinísticos, arquivo incompatível, espaços, especiais e política de links |
-| 4 | Download | Bytes exatos, apenas arquivo regular, headers e nome seguro, processamento incremental, erro antes/depois dos headers e liberação após desconexão |
-| 5 | Diretórios | Pais ausentes, 201+Location novo, 200 repetido preservando conteúdo, raiz, arquivo conflitante e ausência de corpo |
-| 5 | Upload | Um campo de arquivo exato, campos/arquivos extras rejeitados, destino definido pelo path, pais existentes, 201+metadados+Location novo, 204 sem corpo em substituição, diretório conflitante, MIME incorreto, limite configurável |
-| 5 | Falhas de upload | Recebimento interrompido, multipart inválido após dados, limite excedido e falha de publicação preservam o destino anterior; staging limpo; autenticação antes do processamento integral |
-| 6 | Exclusão | Arquivo, diretório vazio, não vazio com/sem recursive=true, default false, raiz proibida, inexistente 404, sucesso 204 sem corpo, repetição e falhas recursivas parciais documentadas |
-| 6 | Movimentação e renomeação | name/parentPath isolados e combinados, omitido vs null, corpo vazio/campos extras, name sem separadores, pai existente, no-op, metadados resultantes, raiz protegida, conflito e overwrite apenas arquivo regular |
-| 6 | Restrições de movimento | Diretório para si/descendente, ancestral contendo origem, política de links, EXDEV rejeitado sem cópia/exclusão silenciosa |
-| 7 | Cópia | Arquivo e árvore, target final completo, pai existente, origem igual ao destino, raiz e descendentes proibidos, sem mesclagem, overwrite somente arquivos, status 201/200 e Location conforme criação |
-| 7 | Falhas de cópia | Links/especiais dentro da árvore, falhas de leitura/publicação preservando destino, remoção apenas do staging da própria operação, conflitos e cleanup |
-| 7 | ZIP | Corpo JSON obrigatório, path default `.`, apenas diretório, entradas relativas, diretórios vazios, raiz, Content-Type/Disposition, limites de entradas e volume, ausência de caminhos absolutos/escape/internos |
-| 7 | Falhas e recursos ZIP | Links na árvore, limite antes da resposta, processamento incremental sem ZIP inteiro em memória, remoção de temporários no sucesso/erro/desconexão |
-| 8 | HTTPS real | Cliente confia no certificado/CA de teste e valida identidade; certificado não confiável ou identidade errada falham; TLS mínimo; nenhuma porta ou fallback HTTP |
-| 8 | Ciclo de certificados | Autoassinado com SAN, chave correspondente, validade/reutilização/renovação; certificado fornecido inválido impede startup, não é sobrescrito; reinício carrega renovação |
-| 8 | CORS | Origem configurada recebe autorização, origem não permitida não recebe autorização CORS, preflight sem Bearer, métodos/headers necessários, headers expostos, operação efetiva exige token, Origin null somente explícito |
-| 8 | Startup/encerramento | Configuração/chave/certificado inválidos e porta ocupada impedem prontidão; nenhuma correção automática do sistema; recursos próprios liberados ao encerrar |
-| 9 | Revisão final | Comando documentado realmente inicia HTTPS, contrato coincide com código/testes, exemplos funcionam com confiança TLS, nenhuma funcionalidade futura anunciada, segredos ausentes do Git e da raiz |
+### Consulta e alteração de arquivos
 
-## Regras transversais de teste
+| Área | Casos necessários |
+| --- | --- |
+| Saúde e metadados | Resposta mínima de saúde após autenticação; nomes de campos em camelCase; raiz sem caminho absoluto; `size: null` para pastas e tamanho em bytes para arquivos; datas UTC; `404` para item ausente. |
+| Listagem | Apenas filhos imediatos; raiz como padrão; grupos e ordenação previsíveis; rejeição de arquivo onde se espera pasta; espaços, caracteres especiais e links. |
+| Download | Bytes exatos de arquivo regular; cabeçalhos e nome seguros; envio por partes; falha antes ou depois dos cabeçalhos; liberação de recursos quando o cliente desconectar. |
+| Criação de pastas | Pais ausentes; `201` com `Location` ao criar; `200` ao repetir sem mudar o conteúdo; raiz; conflito com arquivo; ausência de corpo na requisição. |
+| Upload | Exatamente um campo de arquivo; rejeição de campos extras; destino definido por `path`; pais existentes; `201` com metadados e `Location` ao criar e `204` sem corpo ao substituir; conflito com pasta, tipo de conteúdo incorreto e limite de tamanho. |
+| Falhas de upload | Interrupção, multipart inválido depois dos dados, limite excedido e falha ao colocar o arquivo pronto no destino; preservação do arquivo anterior e limpeza do staging; autenticação antes de receber todo o conteúdo. |
+| Exclusão | Arquivo, pasta vazia e pasta com conteúdo; `recursive=false` por padrão e necessidade de `true` para conteúdo; raiz protegida; `404` quando ausente; `204` sem corpo no sucesso; repetição; efeitos de uma falha após parte da exclusão. |
+| Movimentação e renomeação | `name` e `parentPath` separados ou juntos; campo omitido e `null`; corpo vazio e campos extras; nome sem separadores; pai existente; pedido que mantém o destino; metadados finais; raiz protegida; conflito e `overwrite` somente para arquivo regular. |
+| Destinos de movimento | Pasta movida para si ou para dentro de si; destino ancestral que contém a origem; links; erro `EXDEV` entre sistemas de arquivos sem trocar a operação por cópia e exclusão. |
+| Cópia | Arquivo e árvore de pastas; destino final completo e pai existente; rejeição de origem igual ao destino, raiz ou destino dentro da origem; ausência de mistura com árvore existente; substituição somente de arquivos; `201` ou `200`, com `Location` ao criar. |
+| Falhas de cópia | Links e arquivos especiais na árvore; erros de leitura ou de colocação no destino sem alterar o destino anterior; conflitos; limpeza somente dos temporários da própria operação. |
+| ZIP | Corpo JSON obrigatório; `path` padrão `.`; origem precisa ser pasta; nomes relativos; pastas vazias; raiz; `Content-Type` e `Content-Disposition`; limites de entradas e bytes; ausência de caminhos absolutos, privados ou que escapem da raiz. |
+| Falhas e recursos do ZIP | Links na árvore; limite detectado antes da resposta; leitura por partes sem guardar o ZIP inteiro na memória; remoção dos temporários no sucesso, erro e desconexão. |
 
-- Testar métodos, formatos, Content-Types, headers, obrigatoriedade/defaults, campos
-  desconhecidos, JSON malformado e erros de esquema para cada endpoint correspondente.
-- Nas rotas JSON das etapas 6–7, verificar também `413 payload_too_large` quando
-  o corpo ultrapassar `PASSA_JSON_MAX_BYTES`, inclusive sem `Content-Length`.
-- Verificar `application/problem+json`, status/código consistente e ausência de
-  caminhos absolutos, stack traces e segredos. Respostas 204 nunca contêm corpo.
-- Testar origem, destino e componentes intermediários, inclusive durante operações
-  recursivas. Não limitar segurança a testes de comparação textual de prefixo.
-- Usar diretórios temporários exclusivos; jamais a pasta real de arquivos do operador.
-  Certificados e credenciais de teste também serão exclusivos e temporários.
-- Observar conteúdo antes/depois das falhas; não substituir verificações de
-  preservação/limpeza por testes que só confirmam chamadas internas.
-- Documentar o alcance da concorrência testada. Um teste com mutex interno não
-  demonstra proteção absoluta contra processos externos nem contra todas as montagens.
-- As etapas intermediárias podem testar HTTP internamente sem rede; isso não
-  autoriza um modo normal de execução HTTP. A etapa 8 exige conexões TLS reais.
-- Quando o ambiente não permitir uma verificação, registrar o caso exato e o motivo;
-  não contar caso ignorado/bloqueado como aprovado.
+### HTTPS, navegador e encerramento
 
-## Verificações pendentes das etapas seguintes
+| Área | Casos necessários |
+| --- | --- |
+| Conexão HTTPS/mTLS | A e B conferem certificados e posse de chave nos dois sentidos; recusa de peer não confirmado; versão mínima de TLS; nenhuma alternativa HTTP. |
+| Certificados | Identidade persistente, correspondência de chave, validade, perfil de nomes e pinning; mudança de IP não troca certificado; renovação não herda confiança sem procedimento explícito. |
+| Interface local e CORS | Controle local protegido; página externa não inicia varredura nem confirma pedidos; CORS não substitui autenticação e não ultrapassa a verificação TLS; contrato local ainda em definição. |
+| Inicialização e encerramento | Opções, chave ou certificado inválidos e porta ocupada impedem o servidor de ficar pronto; nenhuma mudança automática no sistema; encerramento libera os recursos do processo. |
+| Uso completo | Comando de início abre HTTPS; exemplos funcionam com validação do certificado; respostas coincidem com os guias; segredos ficam fora do Git e da raiz compartilhada. |
 
-`npm test` executa somente os conjuntos já implementados. Testes das rotas serão
-adicionados com seus handlers; testes reais de HTTPS entram na etapa 8. Ainda não
-existe `npm start` nem comando normal para servir arquivos. O progresso de cada
-novo conjunto deve registrar execução real e limitações, sem promover cenários
-planejados a testes aprovados.
+## Pareamento e persistência
+
+Esses casos precisarão ser verificados com o protocolo escolhido, não apenas
+com simulações de mensagens de sucesso:
+
+| Assunto | Casos necessários |
+| --- | --- |
+| Descoberta | Ambos ativam; um lado desligado não aparece; cancelamento, tempo máximo, várias interfaces, redes sobrepostas e limites de destinos/concorrência. |
+| Controle da varredura | Candidato remoto não pode escolher redes, disparar buscas ou aceitar a si mesmo; somente destinos locais explicitamente permitidos. |
+| Código | Confirmação correta, erro, expiração, reutilização, tentativas limitadas e sessões simultâneas; código de uma tentativa não serve em outra. |
+| Intermediário | Troca de certificado de A ou B, retransmissão de código/mensagens e substituição da sessão não concluem confiança. |
+| Certificado anexado | Precisa corresponder ao participante que prova posse de chave no pareamento; um PEM copiado não basta. |
+| Confirmação bilateral | Ambos salvam; queda de conexão e falha de gravação em apenas um lado não produzem falso sucesso nem acesso precoce aos arquivos. |
+| Registro | Nome, certificado, primeira e última conexão persistem; descoberta e erros não atualizam a última conexão confiável; repetições não criam duplicatas. |
+| Mudança de endereço | Mesmo certificado em novo IP continua reconhecido; certificado diferente no mesmo IP não herda confiança. |
+| Ciclo da identidade | Reinício mantém confiança; troca, expiração, perda ou retirada de confiança têm comportamento explícito; sessões abertas e retomadas TLS precisam respeitar a política. |
+
+## Linux e Windows
+
+A verificação futura deverá usar instalações nativas de Linux Mint, Ubuntu e
+Windows, com conexões Linux↔Linux, Linux↔Windows e Windows↔Windows. Rodar somente
+em WSL não comprova suporte nativo a Windows.
+
+Além de pareamento e transferências, conferir nomes reservados, conflitos de
+maiúsculas, caracteres inválidos, caminhos longos, arquivos abertos, volumes,
+links, junctions/reparse points, permissões POSIX e ACLs. O controle de encerramento
+deve funcionar pelos mecanismos da aplicação e do sistema, sem depender apenas
+de sinais POSIX. Os requisitos estão em [Linux e Windows](platforms.md).
+
+## Cuidados ao escrever novos testes
+
+Use pastas, certificados e credenciais temporários exclusivos. Nunca use arquivos
+reais do operador. Para conferir uma operação que pode falhar, compare o conteúdo
+antes e depois: apenas verificar que uma função foi chamada não prova que o
+arquivo anterior ficou intacto ou que os temporários foram removidos.
+
+Para cada rota, cubra método, tipo de conteúdo, cabeçalhos, campos obrigatórios,
+valores padrão, campos desconhecidos, JSON malformado e valores inválidos. Nas
+rotas com corpo JSON, inclua `413 payload_too_large` ao ultrapassar
+`PASSA_JSON_MAX_BYTES`, mesmo sem `Content-Length`.
+
+Respostas de erro devem usar `application/problem+json`, com status e código
+coerentes e sem caminhos absolutos, rastros internos de erro ou segredos.
+Respostas `204` não podem ter corpo.
+
+Os testes de caminhos devem verificar origem, destino e pastas intermediárias,
+inclusive dentro de árvores. Comparar apenas prefixos de textos não comprova que
+um arquivo está dentro da raiz compartilhada.
+
+Ao testar operações simultâneas, explique o alcance do teste. Um bloqueio interno
+da aplicação não controla mudanças feitas por outros processos nem comprova
+segurança para todas as montagens de disco.
+
+Requisições podem ser testadas internamente, sem abrir uma porta de rede. Isso não
+substitui os testes com conexões TLS reais e não cria um modo normal de execução
+por HTTP. Se um caso não puder ser executado no ambiente disponível, ele continua
+sem verificação; um teste ignorado não equivale a um teste que passou.

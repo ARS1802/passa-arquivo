@@ -1,158 +1,165 @@
-# Catálogo de unidades de produção
+# Módulos e funções
 
-## Estado e organização
-
-**Etapa 2:** existem três módulos de produção: [app.ts](../src/app.ts),
+O código está em três arquivos: [app.ts](../src/app.ts),
 [check-config.ts](../src/check-config.ts) e [config/index.ts](../src/config/index.ts).
-O projeto utiliza funções, interfaces e esquemas Zod; sua única classe própria é
-`ConfigurationError`. O nome `classes.md` não exige transformar responsabilidades
-em classes. Este catálogo descreve o código existente; execução e resultados dos
-testes estão em [testing.md](testing.md).
+Eles criam uma aplicação Express vazia e permitem conferir a configuração pelo
+terminal. A API ainda não tem rotas, autenticação, operações de arquivos ou HTTPS.
 
-Não existem handlers das rotas contratadas, autenticação, operações de arquivos,
-resolução real de caminhos, leitor de tokens ou preparação TLS. Seus campos de
-configuração já podem ser analisados, mas não executam essas funcionalidades.
+O catálogo descreve o código existente, que ainda usa configuração POSIX e
+campos do modelo anterior de tokens. Não há geração de identidade, descoberta,
+pareamento ou persistência de peers. O desenho do sistema está em
+[Arquitetura](architecture.md); as estruturas abaixo não comprovam suporte a Windows.
+
+Este guia reúne as funções, os tipos e os dados usados nesses arquivos. Para uma
+visão de como eles se conectam, veja [Organização do projeto](architecture.md).
 
 ## `createApp`
 
-- **Arquivo e camada:** [src/app.ts](../src/app.ts), composição inicial do HTTP.
-- **Assinatura exportada:** `createApp(): Express`, síncrona, sem parâmetros.
-- **Responsabilidade:** criar uma instância nova de Express, desabilitar a opção
-  `x-powered-by` e retornar a instância.
-- **Dependências:** fábrica `express` e tipo externo `Express`, do pacote `express`.
-  Não recebe `AppConfig` nem importa o módulo de configuração.
-- **Estado/ciclo de vida:** variável local `app: Express` por chamada; a instância
-  retornada é mutável e pertence ao consumidor. Não há singleton, atributos de
-  classe, herança ou interface própria implementada.
-- **Efeitos:** aloca/configura o objeto Express; não registra rotas ou parsers e
-  não chama `listen`. Importar o módulo não cria uma instância automaticamente.
-- **Erros:** não captura ou traduz erros; uma falha da dependência propagaria ao
-  chamador. Não existe resposta HTTP de erro implementada aqui.
-- **Consumidor real:** [tests/bootstrap.test.ts](../tests/bootstrap.test.ts), teste
-  `importar configuração e criar a aplicação Express não abre listeners nem mantém o processo ativo`,
-  importa o módulo compilado em subprocesso e chama `createApp()` para verificar
-  seu ciclo de vida. Ainda não há consumidor de produção nem listener.
+Em [src/app.ts](../src/app.ts), a função exportada `createApp(): Express` cria e
+devolve uma aplicação Express. Não recebe argumentos e executa imediatamente,
+sem retornar uma `Promise`.
 
-## Módulo executável `check-config`
+Ela chama `express()` e desabilita `x-powered-by`, o cabeçalho que identificaria
+o Express nas respostas. Ainda não registra rotas, processamento de corpos de
+requisição ou uma porta para receber conexões. Importar esse arquivo não cria
+a aplicação: é preciso chamar a função.
 
-- **Arquivo e camada:** [src/check-config.ts](../src/check-config.ts), entrada CLI.
-- **Execução:** `node dist/check-config.js`, pelo script npm `check:config` em
-  [package.json](../package.json), depois da compilação. Não exporta `main`, classe
-  ou objeto.
-- **Dependências:** `loadConfig` e `ConfigurationError` de `./config/index.js`;
-  APIs globais do processo para argumentos, ambiente, saída e código de término.
-- **Entradas:** `process.argv.slice(2)` e `process.env`; a configuração retornada
-  por `loadConfig` é descartada, pois o comando apenas confere sua validade.
-- **Estado:** erro capturado como `unknown`; variável local `issue: ConfigIssue`
-  no laço de diagnóstico. Não mantém configuração global ou recurso persistente.
-- **Ciclo de vida/efeitos:** o bloco principal `try/catch` executa ao avaliar o
-  módulo. Esta é uma entrada com efeitos de saída, não um módulo de importação
-  pura. Não cria Express, diretórios, credenciais, certificados ou listener.
+Cada chamada cria seu próprio objeto `app`. Quem recebe o objeto pode alterá-lo,
+por exemplo, registrando rotas. A função depende apenas do pacote `express` e
+de seu tipo `Express`; não recebe `AppConfig` nem lê a configuração. Se Express
+lançar um erro, a função o deixa chegar a quem a chamou.
 
-| Resultado | Comportamento implementado |
+**Onde é usada:** em [tests/bootstrap.test.ts](../tests/bootstrap.test.ts).
+O teste importa o código compilado em outro processo, chama a função e confere
+que nenhum servidor foi aberto. Ainda não há outro código de produção chamando-a.
+
+## Comando `check-config`
+
+O arquivo [src/check-config.ts](../src/check-config.ts) é a entrada do comando
+`npm run check:config`. Depois de compilar o projeto, esse script executa
+`node dist/check-config.js`.
+
+O código roda assim que o arquivo é carregado; ele não exporta uma função `main`.
+Obtém os argumentos de `process.argv.slice(2)` e as variáveis de ambiente de
+`process.env`, chama `loadConfig` e mostra o resultado. O objeto retornado pela
+função é descartado, porque o comando só precisa conferir as opções.
+
+| Resultado | Mensagem e código de saída |
 | --- | --- |
-| Configuração válida | Escreve em stdout que sintaxe/relações são válidas, que diretórios/certificados/tokens não foram verificados e que nenhum servidor foi iniciado; o comando termina normalmente com código `0` |
-| `ConfigurationError` | Escreve mensagem geral e cada `option: message` em stderr; define `process.exitCode = 2` |
-| Outro erro | Escreve diagnóstico genérico em stderr sem detalhes internos; define `process.exitCode = 1` |
+| Configuração válida | Informa na saída comum (`stdout`) que os valores são válidos, mas que diretórios, certificados e tokens não foram verificados e nenhum servidor foi iniciado. Termina com código `0`. |
+| `ConfigurationError` | Escreve na saída de erros (`stderr`) uma mensagem geral e cada problema no formato `option: message`. Define `process.exitCode = 2`. |
+| Outro erro | Escreve uma mensagem genérica em `stderr`, sem detalhes internos. Define `process.exitCode = 1`. |
 
-Não chama `process.exit()` nem imprime configuração, valores fornecidos, stack trace
-ou material secreto. O código de término indica somente o resultado da conferência,
-não a possibilidade de inicializar um servidor real.
+O comando não usa `process.exit()` para interromper imediatamente a execução.
+Também não imprime os valores recebidos nem a lista de chamadas que levou ao
+erro (*stack trace*). Não guarda uma configuração global e não cria aplicação
+Express, pastas, tokens, certificados ou servidor.
 
-**Consumidores reais:** script `check:config` de `package.json`; testes de
-[tests/bootstrap.test.ts](../tests/bootstrap.test.ts) identificados pelos prefixos
-`conferência válida termina`, `CLI aceita argumentos` e `CLI rejeita opções desconhecidas`.
-Eles usam `spawnSync` para executar a entrada compilada e observar status,
-stdout/stderr e ausência de arquivos criados, sem importá-la no processo do runner.
+Suas dependências são `loadConfig`, `ConfigurationError` e as informações do
+processo Node.js. Dentro do `catch`, o erro começa com o tipo `unknown`: o código
+confere se é `ConfigurationError` antes de ler seus problemas. A variável local
+`issue` representa cada item mostrado na saída.
+
+**Onde é usado:** pelo script `check:config` de [package.json](../package.json)
+e pelos testes em [tests/bootstrap.test.ts](../tests/bootstrap.test.ts). Os testes
+usam `spawnSync` para executar o comando em outro processo e observar mensagens,
+código de saída e se algum arquivo foi criado.
 
 ## Módulo `config/index`
 
-**Arquivo/camada:** [src/config/index.ts](../src/config/index.ts), configuração.
-Exporta interfaces `AppConfig`/`ConfigIssue`, classe `ConfigurationError` e função
-`loadConfig`. Importa `isIP` de `node:net`, operações POSIX de `node:path` e `z` do
-Zod. Usa `URL` somente para análise textual, sem conexão ou consulta DNS.
+[src/config/index.ts](../src/config/index.ts) exporta a função `loadConfig`, a
+classe `ConfigurationError` e as interfaces `AppConfig` e `ConfigIssue`.
 
-Na avaliação, cria tabelas de opções e esquemas. Não lê `process.env`, argumentos
-reais, diretório corrente ou filesystem; não abre listeners. Cada chamada de
-`loadConfig` recebe entradas explícitas e aloca resultado ou erro. Não há dependência
-de Express nem tipos HTTP.
+Usa Zod para conferir os valores, `isIP` de `node:net` para reconhecer IPs e as
+funções POSIX de `node:path` para tratar caminhos no formato usado pelo Linux.
+Usa também `URL` para analisar texto, sem fazer conexões ou consultas DNS.
+
+Ao importar o módulo, são criadas as tabelas de opções e as regras de validação.
+Ele não lê argumentos, variáveis de ambiente ou arquivos por conta própria.
+Esses dados precisam ser passados para `loadConfig`. O módulo não depende de Express.
 
 ### Interface `AppConfig`
 
-Contrato estático de saída de `loadConfig`; não possui construtor, métodos, herança,
-instância própria ou efeitos em execução. Todas as propriedades são `readonly` em
-TypeScript; os objetos retornados por `loadConfig` são também congelados em runtime,
-incluindo os arrays. Defaults/limites públicos estão em [configuration.md](configuration.md).
+`AppConfig` descreve o objeto que `loadConfig` devolve. Uma interface é uma
+descrição de tipos para o TypeScript; ela não cria objetos durante a execução.
+Todos os campos são `readonly`, e `loadConfig` também congela o objeto e suas
+listas com `Object.freeze` para impedir alterações durante a execução.
 
-| Propriedade | Tipo | Ausência | Finalidade |
-| --- | --- | --- | --- |
-| `root` | `string` | Não | Caminho absoluto normalizado lexicalmente da raiz configurada |
-| `host` | `string` | Não | IP literal de bind, IPv6 canônico |
-| `port` | `number` | Não | Porta inteira validada |
-| `stateDir` | `string` | Não | Caminho lexical do estado privado |
-| `stagingDir` | `string` | Não | Caminho lexical do staging privado |
-| `tlsMode` | `'self-signed' \| 'provided'` | Não | Modo futuro de preparação do certificado |
-| `tlsSans` | `readonly string[]` | Não | Identidades DNS/IP normalizadas, não vazias e sem duplicatas |
-| `tlsCertFile` | `string` | Não | Caminho lexical do certificado/cadeia |
-| `tlsKeyFile` | `string` | Não | Caminho lexical da chave privada |
-| `tokensFile` | `string` opcional | Sim | Caminho de futura leitura de tokens externos; ausência indica futura geração |
-| `corsOrigins` | `readonly string[]` | Não | Origens canônicas e eventual literal `null` |
-| `uploadMaxBytes` | `number` | Não | Limite configurado do arquivo enviado |
-| `zipMaxEntries` | `number` | Não | Limite configurado de entradas do ZIP |
-| `zipMaxBytes` | `number` | Não | Limite configurado do volume não comprimido |
-| `jsonMaxBytes` | `number` | Não | Limite configurado de corpos JSON |
-| `shutdownTimeoutMs` | `number` | Não | Prazo configurado de encerramento |
+| Campo | Tipo | Para que serve |
+| --- | --- | --- |
+| `root` | `string` | Caminho absoluto da pasta compartilhada, com o texto do caminho normalizado. |
+| `host` | `string` | IP em que o servidor deverá receber conexões; IPv6 é convertido para uma forma padronizada. |
+| `port` | `number` | Porta do servidor. |
+| `stateDir` | `string` | Caminho da pasta privada que guardará os dados do servidor. |
+| `stagingDir` | `string` | Caminho da área privada usada para preparar arquivos antes de colocá-los no destino. |
+| `tlsMode` | `'self-signed' \| 'provided'` | Indica se o certificado deverá ser gerado pelo servidor ou fornecido pelo operador. |
+| `tlsSans` | `readonly string[]` | Nomes DNS e IPs que o certificado deverá identificar; a lista não pode ser vazia nem ter repetições. |
+| `tlsCertFile` | `string` | Caminho do certificado ou da cadeia de certificados. |
+| `tlsKeyFile` | `string` | Caminho da chave privada do certificado. |
+| `tokensFile` | `string` opcional | Caminho aceito pela configuração anterior de tokens; não é lido pelo comando nem define a identidade dos peers. |
+| `corsOrigins` | `readonly string[]` | Origens permitidas para acesso pelo navegador, no formato aceito pela configuração; pode incluir a string `null`. |
+| `uploadMaxBytes` | `number` | Tamanho máximo de um arquivo enviado, em bytes. |
+| `zipMaxEntries` | `number` | Quantidade máxima de itens incluídos em um ZIP. |
+| `zipMaxBytes` | `number` | Tamanho máximo do conteúdo do ZIP antes da compressão, em bytes. |
+| `jsonMaxBytes` | `number` | Tamanho máximo de um corpo JSON, em bytes. |
+| `shutdownTimeoutMs` | `number` | Tempo máximo para aguardar o encerramento, em milissegundos. |
 
-**Consumidores:** assinatura de retorno de `loadConfig` e definição de `optionNames`
-no mesmo módulo; testes de [tests/config.test.ts](../tests/config.test.ts) inspecionam
-a saída com tipo inferido. Nenhum servidor consome esses campos na etapa 2. Sua
-presença não significa aplicação do limite ou operação a uma requisição HTTP.
+Somente `tokensFile` pode estar ausente. Os valores padrão e limites aceitos estão
+em [Configuração](configuration.md).
+
+**Onde é usada:** no retorno de `loadConfig` e na definição da tabela `optionNames`.
+Os testes de [config.test.ts](../tests/config.test.ts) conferem o objeto retornado.
+Ainda não há um servidor usando esses campos para atender requisições ou aplicar
+limites às transferências.
 
 ### Interface `ConfigIssue`
 
-Contrato estático com duas propriedades obrigatórias e `readonly`: `option: string`,
-identificador público da opção ou categoria; `message: string`, diagnóstico
-controlado. Não possui métodos, herança, instância própria ou efeitos em execução.
+Descreve um problema de configuração com dois campos obrigatórios e `readonly`:
 
-**Consumidores:** argumento/atributo `issues` de `ConfigurationError`; produtores
-`fail` e `loadConfig`; laço de stderr em `check-config`; helper
-`expectConfigurationError` de [tests/config.test.ts](../tests/config.test.ts), que
-verifica campos e ausência dos valores sensíveis usados nos testes.
+| Campo | Tipo | Significado |
+| --- | --- | --- |
+| `option` | `string` | Nome público da opção, como `--port`, ou categoria do problema. |
+| `message` | `string` | Explicação do problema, sem repetir o valor recebido. |
+
+**Onde é usada:** na lista `issues` de `ConfigurationError`. As funções `fail`
+e `loadConfig` criam esses itens; `check-config` os mostra no terminal. Nos testes,
+`expectConfigurationError` confere os campos e verifica se os valores privados
+usados como exemplo ficaram fora das mensagens.
 
 ### Classe `ConfigurationError`
 
-- **Responsabilidade:** representar falhas de parsing/validação sem acoplamento
-  a códigos HTTP ou emissão de valores rejeitados.
-- **Herança:** `extends Error`; não implementa interface própria.
-- **Construtor:** `constructor(issues: readonly ConfigIssue[])`. Chama
-  `super('Configuração inválida.')`, define `name` e copia/congela cada item e o
-  array `issues`. Não recebe serviços.
-- **Criação/ciclo de vida:** criada por `fail` e `loadConfig` a cada ocorrência e
-  propagada ao chamador; a CLI captura por `instanceof`.
-- **Métodos:** nenhum próprio além do construtor; mantém métodos herdados de
-  `Error`. Não há comportamento assíncrono nem recursos a fechar.
-- **Efeitos:** aloca erro e copia diagnósticos; não escreve logs ou define término.
+Representa uma falha ao ler ou validar a configuração. Herda de `Error` e não
+depende de status HTTP. Seu construtor recebe a lista de problemas:
 
-| Atributo | Tipo/ausência | Mutabilidade e finalidade |
+```ts
+constructor(issues: readonly ConfigIssue[])
+```
+
+O construtor define a mensagem geral como `Configuração inválida.`, atribui o nome
+`ConfigurationError` e faz uma cópia da lista e de seus itens. Em seguida,
+congela essas cópias para impedir alterações.
+
+| Atributo | Tipo | Comportamento |
 | --- | --- | --- |
-| `issues` | `readonly ConfigIssue[]`, obrigatório | Referência readonly em TypeScript; array e itens congelados em runtime; diagnósticos copiados |
-| `name` | `string`, definido como `ConfigurationError` | Propriedade herdada atribuída pelo construtor, não congelada |
-| `message` | `string`, definida pelo construtor | Mensagem geral de `Error`, não congelada |
-| `stack` | `string \| undefined`, herdado | Depuração produzida pelo runtime; não emitida pela CLI |
+| `issues` | `readonly ConfigIssue[]` | Lista obrigatória de problemas; lista e itens são congelados. |
+| `name` | `string` | Recebe `ConfigurationError` para identificar o tipo de erro. |
+| `message` | `string` | Contém a mensagem geral definida pelo construtor. |
+| `stack` | `string \| undefined` | Informação de depuração criada pelo JavaScript; o comando não a imprime. |
 
-A instância inteira de `Error` não é congelada. O construtor não sanitiza conteúdo
-arbitrário: os produtores atuais `fail`/`loadConfig` fornecem mensagens controladas.
-Preservar essa responsabilidade ao adicionar consumidores.
+O objeto de erro inteiro não é congelado: `name`, `message` e `stack` podem mudar.
+A classe não limpa mensagens arbitrárias recebidas no construtor. As funções
+que a usam, `fail` e `loadConfig`, são responsáveis por fornecer mensagens que
+não revelem os valores informados.
 
-**Consumidores reais:** `fail`/`loadConfig` no módulo; `catch` em
-[check-config.ts](../src/check-config.ts); importação e helper
-`expectConfigurationError` em [tests/config.test.ts](../tests/config.test.ts).
-Testes de subprocesso em `bootstrap.test.ts` observam a tradução CLI, sem receber
-diretamente a instância.
+Não há outros métodos próprios além do construtor. Criar esse erro não escreve
+mensagens nem termina o processo; essas tarefas pertencem ao comando que o captura.
+
+**Onde é usada:** `fail` e `loadConfig` criam e lançam o erro; `check-config`
+identifica-o com `instanceof`. [config.test.ts](../tests/config.test.ts) o importa
+e usa `expectConfigurationError` para inspecioná-lo. Os testes de `bootstrap`
+observam as mensagens e o código de saída do comando.
 
 ### Função `loadConfig`
-
-Assinatura exportada, síncrona:
 
 ```ts
 loadConfig(
@@ -161,100 +168,123 @@ loadConfig(
 ): AppConfig
 ```
 
-Argumentos obrigatórios, sem defaults; a função não os modifica. `argv` contém
-somente opções da aplicação, sem executável/arquivo. `env` é fornecido pelo
-consumidor, sem leitura global interna.
+Os dois argumentos são obrigatórios e não são alterados pela função. `argv`
+contém somente as opções da aplicação, sem o nome do executável ou do arquivo.
+`env` contém as variáveis de ambiente escolhidas por quem faz a chamada.
 
-**Fluxo:** analisar argumentos; rejeitar nomes desconhecidos `PASSA_`; selecionar
-CLI > ambiente > defaults; derivar caminhos TLS de `stateDir` em `self-signed`
-quando ausentes; executar `configSchema.safeParse`; converter falhas em
-`ConfigurationError`; copiar/congelar objeto e arrays. Variável de ambiente conhecida
-sobrescrita pela CLI não é validada como valor efetivo. Valor vazio escolhido não
-volta ao default.
+A função segue esta ordem:
 
-**Invariantes:** 16 campos conhecidos, `tokensFile` opcional e omitido quando
-ausente; inteiros positivos nos limites; listas coerentes; bind concreto nos SANs;
-separação lexical dos diretórios/materiais. Não retorna Promise nem executa I/O,
-autenticação, operações de arquivos ou preparação TLS.
+1. Lê os argumentos e rejeita variáveis desconhecidas que começam com `PASSA_`.
+2. Para cada opção, escolhe o argumento do terminal, a variável de ambiente ou
+   o valor padrão, nessa ordem.
+3. Em `self-signed`, calcula os caminhos padrão do certificado e da chave a
+   partir de `stateDir`, caso não tenham sido informados.
+4. Chama `configSchema.safeParse` para conferir os valores e suas combinações.
+5. Se houver falhas, lança `ConfigurationError`. Caso contrário, copia e congela
+   o objeto de configuração e suas listas antes de devolvê-lo.
 
-**Limites:** normalização lexical inclui `.`/`..` e separadores; não é `realpath`,
-prova de contenção real ou validação de caminhos da API. Não verifica existência,
-links, permissões, dispositivos, relação com repositório, conteúdo dos tokens ou
-validade de chave/certificado. Essas verificações pertencem às próximas etapas.
+Uma variável conhecida substituída por um argumento do terminal não tem seu valor
+validado. Já um valor vazio escolhido é inválido: a função não o troca pelo padrão.
+As listas são substituídas por inteiro, sem juntar valores de fontes diferentes.
 
-**Erros:** `ConfigurationError` por argumentos, variável desconhecida ou esquema;
-diagnósticos não incluem valores recebidos. Erro inesperado propaga ao chamador.
-Não produz resposta HTTP.
+Há 16 campos conhecidos. `tokensFile` é omitido do resultado quando não foi
+informado. Os números precisam ser inteiros positivos dentro dos limites, as
+listas precisam respeitar suas regras e o IP específico de escuta precisa constar
+nos nomes e IPs do certificado. A função também confere a separação dos caminhos
+de pastas, certificado, chave e tokens.
 
-**Consumidores:** bloco principal de [check-config.ts](../src/check-config.ts), com
-argumentos/ambiente reais; testes registrados em
-[tests/config.test.ts](../tests/config.test.ts), com entradas isoladas para defaults,
-precedência, validação, relações e imutabilidade.
+Essa separação considera somente o texto dos caminhos, incluindo a normalização
+de `.` e `..`. A função não abre arquivos nem confere existência, links, permissões,
+dispositivos, relação com o repositório ou conteúdo de tokens e certificados.
+Também não valida caminhos recebidos por uma rota da API. Ela executa de forma
+síncrona, sem retornar uma `Promise`.
 
-### Tipos, tabelas e helpers internos
+Argumentos inválidos, variáveis desconhecidas e falhas nas regras produzem
+`ConfigurationError`, sem incluir os valores recebidos. Outros erros chegam a
+quem chamou a função. Nenhuma resposta HTTP é criada aqui.
 
-Todos estão em [src/config/index.ts](../src/config/index.ts), sem exportação. Helpers
-síncronos, sem I/O, atributos de instância, herança ou interfaces próprias; estado
-por chamada é local. Tabelas/esquemas vivem durante a avaliação do módulo.
+**Onde é usada:** em [check-config.ts](../src/check-config.ts), com os argumentos
+e o ambiente do processo, e em [config.test.ts](../tests/config.test.ts), com
+dados de teste para conferir valores padrão, prioridade, validação e proteção
+contra alterações do resultado.
 
-| Símbolo | Tipo ou assinatura | Responsabilidade e consumidores reais |
+### Tipos e tabelas internos
+
+Os itens abaixo pertencem a [src/config/index.ts](../src/config/index.ts) e não
+são exportados. Outros arquivos usam as funções públicas, sem acessar essas tabelas.
+
+| Nome | Tipo | Função dentro do módulo |
 | --- | --- | --- |
-| `ConfigKey` | `keyof typeof optionNames` | União estática de chaves; usada por `RawConfig`, tabelas, validação cruzada e tradução em `loadConfig` |
-| `RawConfig` | `Partial<Record<ConfigKey, string>>` | Valores textuais não validados; usado em `defaults`, `parseArguments` e variável `raw` de `loadConfig` |
-| `optionNames` | Objeto `as const`, satisfazendo `Record<keyof AppConfig, string>` | Liga 16 campos aos nomes CLI; gera `optionEntries` e identifica diagnósticos em `parseArguments`/`loadConfig` |
-| `defaults` | `RawConfig` | Defaults textuais de dez campos, lidos por `loadConfig`; raiz/estado/staging são explícitos e TLS derivado é separado |
-| `optionEntries` | `[ConfigKey, string][]` | Pares de `optionNames`; usados para gerar `cliKeys`/`envKeys` e selecionar valores em `loadConfig` |
-| `cliKeys` | `Map<string, ConfigKey>` | Liga `--nome` à chave; consultado por `parseArguments` |
-| `envKeys` | `Set<string>` | Nomes `PASSA_*` aceitos; consultado por `loadConfig` |
-| `environmentName` | `(name: string): string` | Converte kebab-case em variável `PASSA_` maiúscula; usado por `envKeys` e `loadConfig` |
-| `fail` | `(option: string, message: string): never` | Cria/lança erro de um item; chamado por `parseArguments`/`loadConfig` |
-| `parseArguments` | `(argv: readonly string[]): RawConfig` | Aceita `--nome valor`/`--nome=valor`, preserva `=` posterior no valor; rejeita desconhecidos/repetidos/posicionais/valor separado ausente; cria objeto local e lança via `fail` |
-| `canonicalIp` | `(value: string): string` | Canonicaliza IPv6 por `URL`, preserva IPv4; usado em `validSan` e transforms de `sans`/`configSchema`; fluxo interno pressupõe IP validado |
-| `isIpLiteral` | `(value: string): boolean` | Reconhece IPv4/IPv6 sem zona `%`; usado por `validSan`, `sans` e campo `host` |
-| `isUnspecifiedIp` | `(value: string): boolean` | Reconhece IPs não especificados canônicos considerados pelo código; usado por `validSan` e relação bind/SAN |
-| `validSan` | `(value: string): boolean` | Valida IP ou DNS ASCII com limites; rejeita IP não especificado/wildcard/URL/porta e forma numérica pontuada inválida; usado por `sans` |
-| `validOrigin` | `(value: string): boolean` | Literal `null` ou HTTP(S) idêntico a `URL.origin`; rejeita wildcard/falha de parsing; usado por `origins` |
-| `contains` | `(parent: string, candidate: string): boolean` | Igualdade/descendência lexical por `path.relative`, não prefixo parcial; chamado por `overlaps` e relações de materiais no esquema |
-| `overlaps` | `(first: string, second: string): boolean` | Aplica `contains` nos dois sentidos; usado nas relações de diretórios/materiais |
+| `ConfigKey` | `keyof typeof optionNames` | Conjunto dos nomes de campos conhecidos; usado em `RawConfig`, tabelas, validações entre campos e mensagens de `loadConfig`. |
+| `RawConfig` | `Partial<Record<ConfigKey, string>>` | Objeto de valores ainda em texto, possivelmente incompleto; usado em `defaults`, `parseArguments` e `raw`, dentro de `loadConfig`. |
+| `optionNames` | Objeto `as const` que satisfaz `Record<keyof AppConfig, string>` | Liga os 16 campos aos nomes de opções do terminal; usado em `optionEntries` e nas mensagens de `parseArguments` e `loadConfig`. |
+| `defaults` | `RawConfig` | Valores padrão em texto para dez campos, usados por `loadConfig`. As três pastas são obrigatórias; os caminhos TLS padrão são calculados à parte. |
+| `optionEntries` | `[ConfigKey, string][]` | Lista dos pares de `optionNames`; usada para criar `cliKeys` e `envKeys` e escolher os valores em `loadConfig`. |
+| `cliKeys` | `Map<string, ConfigKey>` | Liga uma opção como `--state-dir` ao campo correspondente; consultada por `parseArguments`. |
+| `envKeys` | `Set<string>` | Conjunto das variáveis `PASSA_*` aceitas; consultado por `loadConfig`. |
 
-Referências das tabelas são `const`, mas objetos, arrays, `Map` e `Set` internos não
-estão congelados. O código atual os lê após criar o módulo; isso difere do
-congelamento explícito da saída pública.
+Essas tabelas são criadas quando o módulo é carregado. Embora suas referências
+sejam declaradas com `const`, os objetos, listas, `Map` e `Set` não são congelados.
+O código apenas os consulta depois de criá-los. O congelamento explícito é usado
+no resultado público de `loadConfig` e na lista de problemas do erro.
 
-### Esquemas Zod internos
+### Funções auxiliares internas
 
-Tipos genéricos são inferidos pelo TypeScript; a tabela registra entrada/saída
-relevantes sem catalogar classes internas do Zod. Falhas tornam-se issues traduzidas
-por `loadConfig`; nenhum esquema produz HTTP.
+Essas funções também ficam em `src/config/index.ts`. Usam apenas valores em
+memória, sem ler arquivos ou abrir conexões. Suas variáveis de trabalho são locais.
 
-| Símbolo | Entrada → saída | Regras e consumidores |
+| Função | Assinatura | O que faz e quem a usa |
 | --- | --- | --- |
-| `absolutePath` | string → string | Absoluto POSIX sem NUL; normalização lexical e remoção de barra final exceto `/`; usado nos seis campos de caminho de `configSchema` |
-| `decimalInteger(maximum: number)` | Esquema string → number | Exige dígitos, converte para inteiro positivo representável até `maximum`; cria esquemas de porta/limites/prazo em `configSchema` |
-| `jsonInput` | string → unknown | `JSON.parse`; falha acrescenta issue e retorna `z.NEVER`; base de `sans`/`origins` |
-| `sans` | string JSON → string[] | Array não vazio de identidades; DNS minúsculo/IPv6 canônico; duplicatas verificadas após normalização; usado em `tlsSans` |
-| `origins` | string JSON → string[] | Array de origens válidas/distintas; vazio permitido; usado em `corsOrigins` |
-| `configSchema` | Objeto textual → objeto tipado | Combina 16 campos e callback `superRefine`; consumido por `configSchema.safeParse(raw)` em `loadConfig` |
+| `environmentName` | `(name: string): string` | Converte `state-dir` em `PASSA_STATE_DIR`, por exemplo. Usada ao criar `envKeys` e em `loadConfig`. |
+| `fail` | `(option: string, message: string): never` | Lança `ConfigurationError` com um problema. Usada por `parseArguments` e `loadConfig`; `never` indica que a função não retorna normalmente. |
+| `parseArguments` | `(argv: readonly string[]): RawConfig` | Lê `--nome valor` e `--nome=valor`, preservando sinais `=` dentro do valor. Rejeita opções desconhecidas, repetidas, argumentos sem opção e opções sem valor separado; lança erros por `fail`. Usada por `loadConfig`. |
+| `canonicalIp` | `(value: string): string` | Padroniza a escrita de IPv6 por meio de `URL` e mantém IPv4. Recebe IP já validado. Usada por `validSan`, `sans` e `configSchema`. |
+| `isIpLiteral` | `(value: string): boolean` | Reconhece IPv4 ou IPv6 sem identificador de zona `%`. Usada por `validSan`, `sans` e a regra de `host`. |
+| `isUnspecifiedIp` | `(value: string): boolean` | Reconhece `0.0.0.0`, `::` e `::ffff:0:0`, endereços que não identificam uma interface específica. Usada por `validSan` e na comparação entre `host` e `tlsSans`. |
+| `validSan` | `(value: string): boolean` | Confere um nome DNS ASCII ou IP para o certificado. Rejeita IP não específico, `*`, URL, porta e textos numéricos com pontos que não são IPv4 válido. Usada por `sans`. |
+| `validOrigin` | `(value: string): boolean` | Aceita a string `null` ou uma origem HTTP(S) exatamente igual a `URL.origin`. Rejeita `*` e textos que não formam uma URL válida. Usada por `origins`. |
+| `contains` | `(parent: string, candidate: string): boolean` | Usa `path.relative` para saber se os caminhos são iguais ou se um está abaixo do outro, considerando o texto. Usada por `overlaps` e pelas regras de caminhos dos arquivos privados. |
+| `overlaps` | `(first: string, second: string): boolean` | Aplica `contains` nos dois sentidos para detectar igualdade ou se um caminho contém o outro. Usada nas regras de pastas e arquivos privados. |
 
-O callback `superRefine` usa o helper local
-`addIssue(key: ConfigKey, message: string): void` para associar falhas à opção.
-Compara três diretórios aos pares; exige SAN para bind concreto; mantém materiais
-autoassinados sob `stateDir`; impede colisões de certificado/chave/tokens entre si,
-com raiz/staging e como ancestrais do estado. Sem `tokensFile`, considera o futuro
-`stateDir/tokens.json` somente para detectar colisões; não cria esse arquivo.
+### Regras de validação do Zod
 
-## Dependências e artefatos
+Um esquema Zod reúne regras para conferir e, quando necessário, transformar um
+valor. Os esquemas abaixo são internos. `loadConfig` converte os problemas
+encontrados neles em `ConfigurationError`.
 
-| Dependência/artefato | Papel usado nesta etapa |
+| Nome | Entrada → saída | Regras e uso |
+| --- | --- | --- |
+| `absolutePath` | `string` → `string` | Exige caminho absoluto POSIX sem byte nulo. Normaliza o texto e remove a barra final, exceto em `/`. Usado nos seis campos de caminho de `configSchema`. |
+| `decimalInteger(maximum: number)` | Cria um esquema de `string` → `number` | Aceita apenas dígitos e converte para inteiro positivo que JavaScript consegue representar com precisão, até `maximum`. Usado em porta, limites e prazo. |
+| `jsonInput` | `string` → `unknown` | Converte JSON com `JSON.parse`. Se falhar, registra um problema e retorna `z.NEVER`, interrompendo aquela transformação. Usado como base de `sans` e `origins`. |
+| `sans` | Texto JSON → `string[]` | Exige lista não vazia de nomes DNS e IPs. Converte DNS para minúsculas e padroniza IPv6; verifica repetições depois dessas mudanças. Usado em `tlsSans`. |
+| `origins` | Texto JSON → `string[]` | Exige origens válidas e sem repetições; aceita lista vazia. Usado em `corsOrigins`. |
+| `configSchema` | Objeto de valores em texto → objeto com os tipos esperados | Combina os 16 campos e confere as relações entre eles com `superRefine`. Usado em `configSchema.safeParse(raw)` por `loadConfig`. |
+
+Dentro de `superRefine`, a função local
+`addIssue(key: ConfigKey, message: string): void` associa cada problema à opção
+correspondente. Essa validação compara as três pastas entre si, exige que o IP
+específico de escuta apareça em `tlsSans` e mantém certificado e chave autoassinados
+dentro de `stateDir`.
+
+Ela também impede que certificado, chave e tokens tenham caminhos iguais ou que
+um contenha o outro. Esses arquivos precisam ficar fora de `root` e `stagingDir`
+e não podem ter um caminho igual ou acima de `stateDir`. Sem `tokensFile`, a
+comparação usa `stateDir/tokens.json`; esse arquivo não é criado pela validação.
+
+## Bibliotecas e arquivos de compilação
+
+| Item | Uso no projeto |
 | --- | --- |
-| Express | Fábrica da instância em `createApp`, sem funcionalidades/listener |
-| Zod | Esquemas, transforms e validação cruzada de configuração |
-| Node.js | Runtime CLI, `isIP`, caminhos POSIX, `URL` e APIs do processo; módulos de teste somente na suíte |
-| TypeScript e tipagens | Análise estática/compilação ESM e tipos externos; não substituem validação em execução |
-| `tsconfig.json` | Compila `src` para `dist`, com `strict`, `NodeNext`, verificações adicionais e source maps |
-| `tsconfig.test.json` | Compila fontes e testes em `.test-build`, estendendo configuração principal |
-| `package-lock.json` | Registra resolução das dependências; versões e comandos em `configuration.md` |
+| Express | Cria a aplicação em `createApp`. Ainda não há rotas ou servidor recebendo conexões. |
+| Zod | Confere e transforma a configuração, incluindo regras que comparam campos. |
+| Node.js | Executa o comando e oferece funções para IPs, caminhos, URLs e acesso aos dados do processo. |
+| TypeScript e pacotes de tipos | Conferem tipos e compilam o código. Essa conferência não substitui a validação dos dados em execução. |
+| [tsconfig.json](../tsconfig.json) | Compila `src` para `dist`, com verificação estrita, módulos `NodeNext` e mapas que relacionam o JavaScript ao TypeScript original. |
+| [tsconfig.test.json](../tsconfig.test.json) | Estende a configuração principal e compila fontes e testes para `.test-build`. |
+| [package-lock.json](../package-lock.json) | Registra as versões resolvidas das dependências. Os comandos estão em [Configuração](configuration.md). |
 
-JavaScript emitido repete a implementação TypeScript e não constitui nova unidade
-autoral. Testes não são unidades de produção; [testing.md](testing.md) registra
-escopo e resultados. Não há biblioteca instalada de multipart, ZIP ou certificados.
+Os arquivos JavaScript em `dist` e `.test-build` são gerados a partir do TypeScript.
+As funções dos testes estão descritas em [Testes](testing.md). Ainda não há
+bibliotecas instaladas para processar uploads multipart, criar ZIPs ou gerar
+certificados.

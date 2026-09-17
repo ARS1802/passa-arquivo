@@ -1,101 +1,60 @@
-# Configuração e inicialização
+# Configuração
 
-## Estado e versões
+Você já pode conferir as opções do projeto pelo terminal. O comando verifica os
+valores informados e se eles combinam entre si; ele não inicia um servidor, não
+cria pastas e não lê certificados ou tokens. A API ainda não recebe requisições.
 
-**Etapa 2: estrutura TypeScript e validação de configuração implementadas.**
-`loadConfig`, em [src/config/index.ts](../src/config/index.ts), valida valores e
-relações lexicais. O comando `check:config`, implementado em
-[src/check-config.ts](../src/check-config.ts), faz essa conferência e termina.
-Não lê nem cria diretórios, tokens ou certificados e não inicia servidor.
-Filesystem real, autenticação e ciclo HTTPS continuam pendentes nas etapas 3 e 8,
-conforme [progress.md](progress.md).
+Esta página descreve a configuração que existe no código, ainda voltada a Linux
+com caminhos POSIX. O modelo P2P exige Linux Mint, Ubuntu e Windows, identidade
+persistente e mTLS; suas opções definitivas ainda serão definidas. Os campos de
+tokens e de TLS abaixo não implementam esse modelo. Veja [Linux e Windows](platforms.md)
+e [Segurança](security.md).
 
-Versões efetivamente utilizadas na preparação da etapa 2, em **2026-09-06**:
+## Preparar o projeto
 
-| Componente | Versão utilizada | Estado e papel |
-| --- | --- | --- |
-| Node.js | `24.19.0` | Runtime LTS já instalado no ambiente; nenhum runtime novo instalado |
-| npm | `11.17.0` | Já disponível com esse runtime; preparação de dependências e lock |
-| TypeScript | `7.0.2` | Instalado em desenvolvimento; compilador local `tsc` |
-| Express | `5.2.1` | Instalado em execução; estrutura HTTP mínima, sem endpoints do contrato |
-| Zod | `4.5.4` | Instalado em execução; validação da configuração |
-| `@types/node` | `24.13.3` | Instalado em desenvolvimento; tipos da linha Node.js 24 |
-| `@types/express` | `5.0.6` | Instalado em desenvolvimento; tipos da linha Express 5 |
-
-O manifesto exige Node.js `>=24.19.0 <25` e npm `>=11 <12`; `.nvmrc` registra
-`24.19.0` e `packageManager` registra `npm@11.17.0`. O Node.js 24 existente foi
-selecionado por `PATH` somente nos comandos da etapa. O Node.js 20 padrão do ambiente
-não foi alterado e não atende ao requisito do projeto.
-
-A consulta upstream de **2026-09-05** encontrou Node.js `24.20.0` disponível com
-npm `11.19.0`; essas duas versões não foram instaladas ou executadas aqui. Os pacotes
-npm usados coincidem com as versões consultadas: TypeScript `7.0.2` (2026-07-08),
-Express `5.2.1` (2025-12-01), Zod `4.5.4` (2026-08-29), `@types/node` `24.13.3`
-(2026-07-08) e `@types/express` `5.0.6` (2025-12-01). Fontes:
-[índice de distribuições Node.js](https://nodejs.org/dist/index.json),
-[registro TypeScript](https://registry.npmjs.org/typescript),
-[registro Express](https://registry.npmjs.org/express),
-[registro Zod](https://registry.npmjs.org/zod),
-[registro @types/node](https://registry.npmjs.org/@types/node) e
-[registro @types/express](https://registry.npmjs.org/@types/express).
-
-Node.js 24 está em Active LTS na data da consulta; o calendário prevê manutenção
-a partir de 2026-10-20 e fim de suporte em 2028-04-30. As datas podem mudar.
-Express 5 requer Node.js 18 ou superior e suporta a versão mais recente da linha.
-O projeto utiliza a linha 24 LTS. Fontes:
-[calendário Node.js](https://github.com/nodejs/Release),
-[releases Node.js](https://nodejs.org/en/about/previous-releases) e
-[suporte Express](https://expressjs.com/en/support/).
-
-## Preparação e comandos disponíveis
-
-A estrutura utiliza ESM, `module`/`moduleResolution: NodeNext`, alvo `ES2023`,
-`strict`, `noUncheckedIndexedAccess` e `exactOptionalPropertyTypes`. O `tsc` local
-compila `src/` para `dist/`; Node.js executa o JavaScript gerado. Não há carregador
-TypeScript ou integração com a API interna do compilador. Zod valida dados em
-execução: tipos TypeScript não validam automaticamente JSON ou variáveis de
-ambiente. Fontes: [requisitos Zod](https://zod.dev/) e
-[API de esquemas Zod](https://zod.dev/api).
-
-Antes de 2025, o compilador TypeScript era implementado em TypeScript/JavaScript.
-O TypeScript 7, lançado em julho de 2026, usa implementação nativa em Go, mantendo
-`tsc`. A mudança busca reduzir o tempo de análise e compilação; a aplicação continua
-escrita em TypeScript e compilada para JavaScript. O compilador local foi executado
-nesta etapa. Fonte:
-[anúncio oficial TypeScript 7](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/).
-
-A preparação inicial executou `npm install` com versões exatas em `package.json`:
-82 pacotes instalados, `package-lock.json` gerado e zero vulnerabilidades informadas
-pelo npm nessa execução. Esse resultado pontual não garante ausência de
-vulnerabilidades. `npm ls` e a versão do compilador local foram conferidos.
-
-Para reproduzir o ambiente, selecione antes Node.js e npm compatíveis. Se utiliza
-nvm com a versão já instalada, `nvm use` lê `.nvmrc`. Depois:
+Use Linux, Node.js **24.19.0** e npm **11.17.0**. A versão do Node.js está em
+[.nvmrc](../.nvmrc). Se você já usa nvm e tem essa versão instalada, execute
+`nvm use` na pasta do projeto. Depois, instale as dependências e compile o código:
 
 ```sh
 npm ci
 npm run build
-npm run check
 ```
 
-`npm ci` instala a árvore do lock; não faz parte de cada execução do programa.
-O lock acompanha também dependências transitivas e deve ser versionado junto ao
-manifesto. Fonte:
-[documentação npm sobre package-lock.json](https://docs.npmjs.com/cli/v11/configuring-npm/package-lock-json/).
+`npm ci` usa as versões salvas em [package-lock.json](../package-lock.json).
+Esse arquivo inclui as dependências diretas e as dependências delas; por isso,
+ele acompanha o [package.json](../package.json) no Git.
 
-Na etapa 2, `npm ci` foi executado com sucesso: 82 pacotes instalados, 83 auditados
-e zero vulnerabilidades relatadas. O SHA-256 do lock permaneceu idêntico antes e
-depois da reinstalação; o valor e os resultados estão em [testing.md](testing.md).
+| Componente | Versão do projeto | Para que serve |
+| --- | --- | --- |
+| Node.js | `24.19.0` | Executa o JavaScript gerado pela compilação. |
+| npm | `11.17.0` | Instala dependências e executa os comandos do projeto. |
+| TypeScript | `7.0.2` | Confere tipos e compila o código para JavaScript. |
+| Express | `5.2.1` | Fornece a estrutura da aplicação HTTP, ainda sem rotas. |
+| Zod | `4.5.4` | Confere os valores de configuração durante a execução. |
+| `@types/node` | `24.13.3` | Descreve os tipos das funções do Node.js para o TypeScript. |
+| `@types/express` | `5.0.6` | Descreve os tipos do Express para o TypeScript. |
 
-| Comando existente | Comportamento |
+O `package.json` aceita Node.js `>=24.19.0 <25` e npm `>=11 <12`; o campo
+`packageManager` registra `npm@11.17.0`. O manifesto atual aceita somente Linux; Windows é requisito do novo desenho,
+mas ainda não está suportado pelo código. macOS não faz parte do alvo atual.
+
+## Comandos disponíveis
+
+| Comando | O que faz |
 | --- | --- |
-| `npm run build` | Compila produção para `dist/`; não inicia listener |
-| `npm run typecheck` | Verifica tipos de produção e testes, sem emitir JavaScript |
-| `npm test` | Compila produção/testes para `.test-build/` e executa `node --test` |
-| `npm run check` | Executa verificação de tipos, build e testes, nessa ordem |
-| `npm run check:config -- ...` | Executa `dist/check-config.js`; requer build prévio; verifica configuração e termina |
+| `npm run build` | Compila os arquivos de `src/` para `dist/`. |
+| `npm run typecheck` | Confere os tipos do código e dos testes, sem gerar JavaScript. |
+| `npm test` | Compila código e testes em `.test-build/` e executa os testes com `node --test`. |
+| `npm run check` | Executa a conferência de tipos, a compilação e os testes, nessa ordem. |
+| `npm run check:config -- ...` | Confere as opções informadas e termina; precisa de uma compilação anterior. |
 
-Exemplo executável após o build:
+Nenhum desses comandos inicia um servidor. **Ainda não existe `npm start`.**
+O [guia de testes](testing.md) explica o que a suíte verifica.
+
+## Conferir suas opções
+
+Depois de executar `npm run build`, informe os três diretórios obrigatórios:
 
 ```sh
 npm run check:config -- \
@@ -104,235 +63,211 @@ npm run check:config -- \
   --staging-dir /srv/passa-arquivo/staging
 ```
 
-Os caminhos são argumentos de exemplo: o comando não precisa que existam e não
-os cria. Saída `0`: sintaxe e relações lexicais aceitas; `2`: `ConfigurationError`;
-`1`: falha inesperada. Os diagnósticos identificam opções conhecidas e mensagens
-fixas, sem valores de entrada, nomes arbitrários, tokens ou caminhos. O comando
-não imprime o objeto de configuração e não comprova que o servidor poderá iniciar.
+Esses caminhos são exemplos e não precisam existir para esta conferência. A
+pasta `shared` representa os arquivos compartilhados. `state` guarda os dados
+privados do servidor. `staging` é uma área temporária para preparar arquivos antes
+de colocá-los no destino. O comando atual não cria nem acessa nenhuma delas.
 
-O exemplo acima foi executado na etapa 2 e retornou `0`, sem criar os diretórios
-informados ou iniciar servidor.
+O código de saída informa o resultado:
 
-**`npm start` ainda não existe.** O comando de inicialização HTTPS pertence à etapa 8.
-Bibliotecas de multipart, ZIP e emissão de certificado serão avaliadas nas etapas
-correspondentes, sem instalação antecipada.
+| Código | Significado |
+| --- | --- |
+| `0` | Os valores e as relações entre as opções foram aceitos. |
+| `2` | Alguma opção está inválida; o comando mostra qual regra precisa ser corrigida. |
+| `1` | Ocorreu uma falha inesperada. |
 
-## Fontes e precedência implementadas
+As mensagens não repetem valores recebidos, caminhos ou nomes de opções
+desconhecidas. O objeto completo de configuração também não é impresso.
+Uma saída `0` não garante que os arquivos existam ou que o servidor possa iniciar.
 
-Para cada opção: **argumento CLI > variável de ambiente > padrão**. Não há arquivo
-de configuração obrigatório nem carregamento implícito de `.env`. Os arquivos
-futuros de tokens e certificados não são uma fonte geral de opções.
+A função que confere os valores é `loadConfig`, em
+[src/config/index.ts](../src/config/index.ts). O comando de terminal fica em
+[src/check-config.ts](../src/check-config.ts).
 
-CLI aceita `--nome valor` ou `--nome=valor`. Argumentos duplicados, desconhecidos,
-posicionais, abreviações e opções sem valor são rejeitados. Não há terminador `--`
-dentro dos argumentos do parser; o primeiro `--` nos exemplos é consumido pelo npm
-para encaminhar argumentos. Valores depois de `=` preservam outros caracteres `=`.
+## Como informar os valores
 
-Variáveis próprias usam `PASSA_`; qualquer nome desconhecido com esse prefixo causa
-erro, sem repetir no diagnóstico o nome ou valor enviados. Variáveis de outros
-programas são ignoradas. Uma variável conhecida é ignorada quando a CLI fornece a
-mesma opção, mesmo se o ambiente contiver um valor inválido. O valor efetivo vazio
-ou inválido sempre causa erro, sem recorrer ao padrão. CLI substitui listas
-inteiras; não concatena listas do ambiente.
+Você pode usar argumentos no terminal ou variáveis de ambiente. Para cada opção,
+a escolha segue esta ordem:
 
-Números usam somente dígitos decimais, sem unidade, notação exponencial, fração,
-sinal ou espaços. Zeros à esquerda são aceitos; o retorno é numérico. Arrays são
-JSON de strings em ambas as fontes; vírgulas sem um array JSON não são aceitas.
-A configuração e seus arrays são congelados. `tokensFile` é propriedade ausente
-quando não configurada, não uma propriedade com valor `undefined`.
+1. Valor passado como argumento, por exemplo `--port 9443`.
+2. Variável de ambiente correspondente, como `PASSA_PORT`.
+3. Valor padrão, quando a opção tem um.
 
-## Opções: validação atual e utilização futura
+Por exemplo, se `PASSA_PORT` vale `8444` e você informa `--port 9443`, a porta
+escolhida é `9443`. Um argumento substitui o valor da variável antes da validação,
+mesmo quando o valor da variável está errado. Um valor vazio ou inválido na fonte
+escolhida causa erro: o programa não tenta usar o padrão para escondê-lo.
 
-São **16 opções**. Tipos, padrões, obrigatoriedade e validações lexicais das tabelas
-estão implementados. A utilização futura não é executada por `check:config`;
-nenhuma conferência atual acessa o filesystem.
+Os argumentos aceitam `--nome valor` e `--nome=valor`. Um `=` dentro do valor é
+preservado. Não são aceitos argumentos repetidos, nomes desconhecidos, abreviações,
+valores soltos ou opções sem valor. O `--` dos exemplos pertence ao npm: ele indica
+que os argumentos seguintes devem chegar ao programa. O programa não aceita outro
+`--` como separador.
 
-### Rede e diretórios
+As variáveis do projeto começam com `PASSA_`. Um nome desconhecido com esse prefixo
+causa erro, inclusive quando há argumentos no terminal. Variáveis de outros
+programas são ignoradas. Não há leitura automática de `.env` nem arquivo geral de
+configuração. Arquivos de tokens e certificados têm finalidades próprias.
 
-| Variável / argumento CLI | Tipo retornado | Padrão | Obrigatoriedade | Validação implementada | Utilização futura |
-| --- | --- | --- | --- | --- | --- |
-| `PASSA_ROOT` / `--root` | string de caminho | Nenhum | Obrigatória | Absoluto POSIX sem NUL; normalização e separação lexical | Resolver raiz efetiva existente/acessível; não criar a pasta compartilhada automaticamente |
-| `PASSA_HOST` / `--host` | string IP | `127.0.0.1` | Opcional | IPv4/IPv6 literal sem zona; IPv6 normalizado; bind concreto precisa constar no SAN | Endereço de escuta; ainda não há bind |
-| `PASSA_PORT` / `--port` | inteiro | `8443` | Opcional | 1 a 65535 | Porta HTTPS; tratar falha real de bind, sem matar outros processos |
-| `PASSA_STATE_DIR` / `--state-dir` | string de caminho | Nenhum | Obrigatória | Absoluto POSIX sem NUL; separado lexicalmente de raiz/staging | Estado privado externo à raiz/repositório; criar `0700` sob pai existente controlado |
-| `PASSA_STAGING_DIR` / `--staging-dir` | string de caminho | Nenhum | Obrigatória | Absoluto POSIX sem NUL; separado lexicalmente de raiz/estado | Staging privado `0700`, externo à raiz/repositório; filesystem compatível com publicação |
+Use somente dígitos para números: `1000` é válido; `1e3`, `1.0`, `+1000`, `10MB`
+e números com espaços não são. Zeros à esquerda são aceitos. Listas precisam ser
+arrays JSON de strings, por exemplo `'["localhost","127.0.0.1"]'`, e não uma
+sequência separada apenas por vírgulas. Uma lista passada no terminal substitui a
+lista inteira da variável de ambiente.
 
-### TLS e localização dos tokens
+Para quem usa `loadConfig` no código, o resultado e suas listas são protegidos
+contra alteração com `Object.freeze`. Quando `tokens-file` não foi informado, o
+objeto não contém a propriedade `tokensFile`; ela não é criada com `undefined`.
 
-| Variável / argumento CLI | Tipo retornado | Padrão | Obrigatoriedade | Validação implementada | Utilização futura |
-| --- | --- | --- | --- | --- | --- |
-| `PASSA_TLS_MODE` / `--tls-mode` | enum `self-signed` ou `provided` | `self-signed` | Opcional | Somente os dois valores exatos | Define administração da emissão/renovação; ambos usam HTTPS |
-| `PASSA_TLS_SANS` / `--tls-sans` | array de strings | `["localhost","127.0.0.1"]` | Opcional | Não vazio; DNS/IP normalizados, sem duplicatas equivalentes; regras abaixo | Identidades SAN que o certificado deve cobrir |
-| `PASSA_TLS_CERT_FILE` / `--tls-cert-file` | string de caminho | `<state-dir>/tls/server.crt` em `self-signed` | Obrigatória em `provided` | Absoluto sem NUL; em `self-signed`, descendente do estado; sem colisões lexicais | Ler/preparar certificado ou cadeia PEM; material público pode ser entregue ao cliente |
-| `PASSA_TLS_KEY_FILE` / `--tls-key-file` | string de caminho | `<state-dir>/tls/server.key` em `self-signed` | Obrigatória em `provided` | Absoluto sem NUL; em `self-signed`, descendente do estado; sem colisões lexicais | Ler/preparar chave PEM correspondente, regular `0600`, de seu usuário, em diretório privado |
-| `PASSA_TOKENS_FILE` / `--tokens-file` | string de caminho opcional | Ausente | Opcional | Se presente, absoluto sem NUL e sem colisões lexicais | Ler tokens externos de arquivo JSON privado; se ausente, gerar tokens por execução |
+## Opções
 
-Os padrões de certificado/chave derivam do `stateDir` efetivo depois da precedência.
-Em `provided`, não há fallback para esses caminhos. Nenhum arquivo é aberto ou
-verificado quanto a existência, conteúdo PEM, validade ou permissões nesta etapa.
+As 16 opções abaixo já são conferidas pelo comando. As operações que usarão esses
+valores — como HTTPS, upload e ZIP — ainda não estão disponíveis.
 
-### CORS, limites e encerramento
+### Rede e pastas
 
-| Variável / argumento CLI | Tipo retornado | Padrão | Obrigatoriedade | Validação implementada | Utilização futura |
-| --- | --- | --- | --- | --- | --- |
-| `PASSA_CORS_ORIGINS` / `--cors-origins` | array de strings | `[]` | Opcional | Sem duplicatas; origens HTTP(S) canônicas ou literal `"null"`; sem wildcard | Lista CORS; sem autorização geral por padrão |
-| `PASSA_UPLOAD_MAX_BYTES` / `--upload-max-bytes` | inteiro | `1073741824` (1 GiB) | Opcional | 1 a `Number.MAX_SAFE_INTEGER` | Contar bytes do único arquivo durante leitura, mesmo sem `Content-Length` |
-| `PASSA_ZIP_MAX_ENTRIES` / `--zip-max-entries` | inteiro | `10000` | Opcional | 1 a `Number.MAX_SAFE_INTEGER` | Contar arquivos/diretórios incluídos, inclusive vazios, sem o diretório contêiner |
-| `PASSA_ZIP_MAX_BYTES` / `--zip-max-bytes` | inteiro | `10737418240` (10 GiB) | Opcional | 1 a `Number.MAX_SAFE_INTEGER` | Somar bytes não comprimidos efetivamente lidos, não o tamanho final do ZIP |
-| `PASSA_JSON_MAX_BYTES` / `--json-max-bytes` | inteiro | `16384` (16 KiB) | Opcional | 1 a `Number.MAX_SAFE_INTEGER` | Limitar corpos JSON estruturados; multipart terá seus próprios limites |
-| `PASSA_SHUTDOWN_TIMEOUT_MS` / `--shutdown-timeout-ms` | inteiro | `10000` | Opcional | 1 a `2147483647` | Prazo em milissegundos para requisições em andamento antes do cancelamento |
+Os três caminhos de pastas são obrigatórios e não têm valor padrão. Devem começar
+com `/`, como os caminhos absolutos do Linux, e seguir as regras de separação
+explicadas adiante.
 
-Esses números estão adotados como defaults de configuração; não são medições de
-capacidade nem limites já aplicados a transferências. Não há uploads, ZIP, parser
-HTTP de corpos ou encerramento de servidor implementados nesta etapa.
+| Variável / argumento | Tipo | Padrão | Para que serve e o que é aceito |
+| --- | --- | --- | --- |
+| `PASSA_ROOT` / `--root` | string | Obrigatória | Pasta dos arquivos compartilhados; caminho absoluto sem byte nulo. |
+| `PASSA_HOST` / `--host` | string | `127.0.0.1` | IP em que o servidor deverá receber conexões; IPv4 ou IPv6, sem nome de domínio nem identificador de interface. Um IP específico deve aparecer em `tls-sans`. |
+| `PASSA_PORT` / `--port` | inteiro | `8443` | Porta HTTPS; de `1` a `65535`. |
+| `PASSA_STATE_DIR` / `--state-dir` | string | Obrigatória | Pasta privada para dados do servidor; caminho absoluto sem byte nulo. |
+| `PASSA_STAGING_DIR` / `--staging-dir` | string | Obrigatória | Pasta temporária privada para preparar arquivos; caminho absoluto sem byte nulo. |
 
-## Normalização e validações cruzadas implementadas
+### Certificados e tokens
 
-### Caminhos de configuração
+TLS é o protocolo que protege a conexão HTTPS. O certificado identifica o servidor;
+a chave privada é o segredo usado por ele nessa conexão. SAN é a lista de nomes e
+IPs que o certificado precisa cobrir.
 
-Caminhos locais são absolutos POSIX; a convenção relativa dos caminhos da API não
-se aplica a eles. O parser normaliza lexicalmente separadores repetidos e segmentos
-`.`/`..`, remove a barra final exceto em `/` e preserva espaços legítimos. Por exemplo,
-`/srv/dados/../pasta com espaço/` torna-se `/srv/pasta com espaço`. Isso não resolve
-links simbólicos, não equivale a `realpath` e não autoriza caminhos da API.
+| Variável / argumento | Tipo | Padrão | Para que serve e o que é aceito |
+| --- | --- | --- | --- |
+| `PASSA_TLS_MODE` / `--tls-mode` | string | `self-signed` | `self-signed` para certificado gerado pelo servidor ou `provided` para certificado fornecido por você. Somente esses valores são aceitos. |
+| `PASSA_TLS_SANS` / `--tls-sans` | array de strings | `["localhost","127.0.0.1"]` | Nomes DNS e IPs do servidor, sem repetições; a lista não pode ficar vazia. |
+| `PASSA_TLS_CERT_FILE` / `--tls-cert-file` | string | `<state-dir>/tls/server.crt` em `self-signed` | Caminho absoluto do certificado PEM ou da cadeia de certificados. Obrigatório em `provided`. |
+| `PASSA_TLS_KEY_FILE` / `--tls-key-file` | string | `<state-dir>/tls/server.key` em `self-signed` | Caminho absoluto da chave privada PEM. Obrigatório em `provided`. |
+| `PASSA_TOKENS_FILE` / `--tokens-file` | string opcional | Ausente | Caminho absoluto de um arquivo JSON com tokens externos. Campo do modelo anterior de tokens; não define a identidade P2P. |
 
-As relações são conferidas por componentes relativos entre caminhos normalizados,
-sem usar prefixo textual como única comparação:
+`PEM` é o formato textual dos arquivos de certificado e chave. Os padrões desses
+dois caminhos usam o `state-dir` escolhido depois da aplicação da ordem de
+preferência. Em `provided`, é preciso informar ambos: não há caminho automático.
+Em `self-signed`, os dois arquivos precisam ficar dentro de `state-dir`.
+Nenhum certificado, chave ou token é lido pelo comando atual.
 
-- Raiz, estado e staging são distintos, sem conter uns aos outros.
-- Materiais de certificado/chave/tokens ficam fora da raiz e do staging; também não
-  podem ser iguais ou ancestrais de diretórios configurados.
-- Os três caminhos de materiais são distintos e não podem conter uns aos outros.
-- Na ausência de `tokensFile`, a verificação de colisões reserva
-  `<state-dir>/tokens.json` para a futura entrega dos tokens gerados.
-- Certificado e chave autoassinados são descendentes do estado; o próprio diretório
-  de estado não serve como caminho de arquivo.
+### Navegadores, limites e encerramento
 
-Essas conferências não conhecem o diretório efetivo do repositório nem inspecionam
-arquivos. Existência, tipo, propriedade, permissões, links, hard links, `realpath`,
-isolamento físico do repositório e dispositivos serão verificados nas etapas 3 e 8.
-Uma configuração lexicalmente aceita ainda pode ser fisicamente inválida.
+CORS é a regra que informa ao navegador quais sites podem usar a API. Ela não
+substitui a autenticação nem a proteção do controle local. Os números abaixo são valores de configuração;
+eles ainda não são aplicados a transferências ou requisições.
 
-### Identidades TLS
+| Variável / argumento | Tipo | Padrão | Para que serve e o que é aceito |
+| --- | --- | --- | --- |
+| `PASSA_CORS_ORIGINS` / `--cors-origins` | array de strings | `[]` | Origens HTTP(S) permitidas, sem repetições nem `*`; também aceita a string `"null"` quando informada explicitamente. |
+| `PASSA_UPLOAD_MAX_BYTES` / `--upload-max-bytes` | inteiro | `1073741824` (1 GiB) | Limite dos bytes recebidos no arquivo de um upload, mesmo sem `Content-Length`. |
+| `PASSA_ZIP_MAX_ENTRIES` / `--zip-max-entries` | inteiro | `10000` | Quantidade de arquivos e pastas no ZIP, incluindo pastas vazias; não conta a pasta que contém o conjunto. |
+| `PASSA_ZIP_MAX_BYTES` / `--zip-max-bytes` | inteiro | `10737418240` (10 GiB) | Soma dos bytes dos arquivos lidos para o ZIP, antes da compressão. |
+| `PASSA_JSON_MAX_BYTES` / `--json-max-bytes` | inteiro | `16384` (16 KiB) | Limite dos corpos JSON das requisições; os limites de multipart serão tratados separadamente. |
+| `PASSA_SHUTDOWN_TIMEOUT_MS` / `--shutdown-timeout-ms` | inteiro | `10000` (10 segundos) | Tempo para esperar operações em andamento ao encerrar; de `1` a `2147483647` milissegundos. |
 
-DNS usa labels ASCII de 1 a 63 caracteres, com letras, dígitos e hífen interno,
-e nome completo de até 253 caracteres, sem ponto final. Letras são convertidas para
-minúsculas. Não há conversão IDNA; nomes internacionais precisam de representação
-ASCII adequada, como labels punycode. Strings formadas só por dígitos e pontos não
-são aceitas como DNS alternativo a IPv4 malformado.
+Todos os quatro limites de tamanho ou quantidade aceitam valores de `1` a
+`Number.MAX_SAFE_INTEGER` (`9007199254740991`), o maior inteiro que o JavaScript
+representa com precisão nesse tipo numérico. Esses máximos não indicam a capacidade
+de memória, armazenamento ou processamento do servidor.
 
-IPs são literais válidos; IPv6 é normalizado para a representação canônica, inclusive
-para detectar duplicatas equivalentes. Zonas, como `%eth0`, não são aceitas. URLs,
-portas, espaços e wildcards não são SANs. Endereços não especificados `0.0.0.0`, `::`
-e o caso IPv4 mapeado `::ffff:0:0` podem ser bind, mas não identidade SAN; equivalentes
-IPv6 são comparados após normalização. Todo IP de bind concreto precisa estar na lista.
+## Regras dos caminhos de configuração
 
-Escuta em todas as interfaces não determina quais identidades os clientes usarão.
-O operador precisa listar os nomes/IPs das URLs esperadas. Na etapa 8, o certificado
-fornecido deverá cobrir as identidades, ser temporalmente válido e corresponder à
-chave. Esses materiais ainda não são lidos pelo parser.
+Os caminhos desta página apontam para arquivos e pastas do computador. Eles são
+absolutos e diferem dos caminhos relativos que serão usados nas requisições da API.
+Nenhum deles pode conter o caractere nulo (NUL).
 
-### Origens CORS
+O programa simplifica barras repetidas e trechos `.` e `..`, retira a barra final
+(exceto em `/`) e preserva espaços dos nomes. Por exemplo,
+`/srv/dados/../pasta com espaço/` vira `/srv/pasta com espaço`.
+Ele faz essa comparação apenas com os textos, sem procurar os arquivos no disco.
 
-A origem deve ser exatamente igual a `new URL(valor).origin`, ter esquema `http:`
-ou `https:` e não conter wildcard. Isso rejeita credenciais, path, query, fragmento,
-barra final e formas não canônicas, como porta padrão explícita ou hostname em
-maiúsculas. Exemplo aceito: `http://localhost:5173`. Não há normalização silenciosa
-das origens; duplicatas são rejeitadas.
+As regras de separação são:
 
-O literal `"null"` só é aceito quando listado explicitamente; JSON `null` não é origem
-válida. Essa origem pode representar `file://` e outros contextos opacos; liberá-la
-não autoriza somente um arquivo local específico. A lista vazia não substitui o
-token nem impede clientes que não aplicam CORS. Preflight, headers e métodos serão
-integrados na etapa 8: [security.md](security.md).
+- A raiz compartilhada, o estado e o staging devem ser pastas diferentes; nenhuma
+  pode ficar dentro de outra.
+- Certificado, chave e tokens devem ficar fora da raiz e do staging. Seus caminhos
+  também não podem ser iguais a essas pastas nem conter essas pastas.
+- Nenhum desses arquivos pode usar o caminho de `state-dir` ou de uma pasta que
+  contenha `state-dir`.
+- Certificado, chave e tokens não podem usar o mesmo caminho nem caminhos contidos
+  uns nos outros, como `/privado/chave` e `/privado/chave/tokens.json`.
+- Quando `tokens-file` está ausente, o programa reserva `<state-dir>/tokens.json`
+  nessa comparação, conforme o modelo anterior. Isso não gera tokens nem
+  prepara o registro de peers.
+- Em `self-signed`, certificado e chave devem ficar dentro da pasta de estado.
 
-## Preparação física e tokens: comportamento futuro
+A comparação respeita os componentes do caminho: `/srv/dados` não contém
+`/srv/dados-privados`. Mesmo assim, essa conferência não verifica links simbólicos,
+existência, permissões, dono dos arquivos ou em qual disco eles estão. Também não
+compara os caminhos com a localização real do repositório. Aceitar o texto da
+configuração não comprova que as pastas estão separadas no disco.
 
-**Ainda não implementado.** A inicialização exigirá raiz existente e acessível,
-resolvendo-a e verificando a separação física de raiz, estado, staging e repositório.
-O caminho inicial da raiz poderá ser resolvido por link configurado pelo operador;
-links dentro da raiz não serão aceitos nas operações da API.
+## Nomes e IPs do certificado
 
-Estado e staging deverão pertencer ao usuário do processo, sem acesso de grupo/outros
-e sem links nos componentes privados. Poderão ser criados com `0700` sob pais
-existentes controlados. Não corrigir permissões existentes automaticamente:
-configuração insegura deverá impedir a inicialização.
+Nomes DNS aceitam letras ASCII, dígitos e hífen no meio de cada parte. Cada parte
+entre pontos tem de 1 a 63 caracteres; o nome completo tem no máximo 253 e não pode
+terminar em ponto. Letras maiúsculas viram minúsculas. Nomes internacionais precisam
+estar na forma ASCII apropriada, como punycode; não há conversão automática.
+Um texto formado apenas por dígitos e pontos não pode contornar a validação de IPv4
+passando como nome DNS.
 
-Staging exigirá filesystem compatível com a publicação no destino, com conferência
-de dispositivos e tratamento das falhas reais, inclusive montagens incompatíveis.
-Não substituir movimentação indisponível por cópia e remoção silenciosas. Comparar
-dispositivos não detecta todas as montagens bind nem oferece isolamento contra
-mudanças externas: [filesystem.md](filesystem.md).
+IPv4 e IPv6 devem ser endereços válidos. Formas equivalentes de IPv6 são convertidas
+para uma forma única, inclusive para encontrar repetições. Não são aceitos URL,
+porta, espaço, `*` nem identificadores de interface como `%eth0` na lista de SANs.
+Nomes que diferem apenas por maiúsculas e minúsculas também contam como repetidos.
 
-O formato de tokens externos continua **proposto**: array JSON não vazio, sem
-repetição, com até 256 strings, cada uma com 32 bytes em base64url canônico sem
-padding (43 caracteres). O operador deverá usar gerador criptográfico; validação
-de formato não comprova qualidade da aleatoriedade. A fonte será arquivo regular
-privado `0600`, do usuário do processo, fora da raiz/repositório e sem links; o
-servidor não modificará essa fonte externa.
+`0.0.0.0`, `::` e `::ffff:0:0` podem indicar onde receber conexões, mas não são
+identidades de certificado. Se `host` contém um IP específico, esse IP precisa
+estar na lista de SANs. Ao usar um endereço para todas as interfaces, como
+`0.0.0.0`, informe na lista os nomes ou IPs que os clientes usarão nas URLs.
 
-Na ausência de fonte externa, a proposta é gerar 16 tokens de 32 bytes por execução
-e entregá-los em `<state-dir>/tokens.json`, privado `0600`, sem log ou argumento
-contendo os segredos. O arquivo de entrega não será relido como persistência;
-reiniciar com geração invalidará os anteriores. Tokens externos poderão permanecer
-iguais. Nenhum token é gerado pelo parser ou comando de conferência.
-Comparação, entrega e confiança: [security.md](security.md).
+O comando confere a lista, mas não abre o certificado. A conferência da validade,
+da chave correspondente e dos nomes cobertos pelo certificado ainda não existe.
 
-## Certificados: ciclo de vida futuro
+## Origens permitidas para navegadores
 
-**Ainda não implementado; etapa 8.** Em `self-signed`, preparar chave/certificado na
-primeira inicialização. Proposta: validade de 30 dias; renovar na inicialização
-quando faltarem no máximo 7 dias, após expiração, mudança de SANs ou invalidade do
-par. Publicar um par coerente antes da escuta; falha de geração/validação impedirá
-startup. Reaproveitar materiais válidos fora dessas condições. Não gerar por
-requisição nem renovar automaticamente durante a execução; o operador deverá
-reiniciar antes do vencimento. Renovação de autoassinado exigirá redistribuir
-confiança aos clientes por canal apropriado.
+Uma origem é formada pelo protocolo, pelo nome ou IP e pela porta, quando
+necessária. Por exemplo, `http://localhost:5173` é válida; não coloque nela caminho,
+barra final, usuário, senha, query ou fragmento.
 
-Em `provided`, o operador fornecerá certificado/cadeia PEM e chave privada, ambos
-regulares, existentes e legíveis. Verificar correspondência, validade e identidades
-antes da escuta. O servidor não sobrescreverá os arquivos. O operador renovará com
-sua CA pública ou privada e reiniciará para carregar o novo par; não há proposta de
-reload implícito. Uma cadeia carregável não garante que os clientes confiem no emissor.
+O valor precisa ser exatamente igual ao resultado de `new URL(valor).origin`.
+Isso também rejeita formas como `https://EXAMPLE.test` e
+`https://example.test:443`, pois a forma esperada é `https://example.test`.
+Não há correção automática das origens, e valores repetidos causam erro.
 
-TLS mínimo 1.2, permitindo 1.3 quando suportado, sem fallback HTTP. A ferramenta de
-emissão ainda será escolhida; nenhuma dependência de OpenSSL CLI, mkcert, step-ca
-ou serviço de CA foi instalada para essa finalidade. Papéis do certificado público,
-chave privada e confiança: [security.md](security.md).
+`["null"]` libera explicitamente a origem chamada `null`. Isso é diferente de usar
+JSON `null`, que é inválido. A origem `null` pode representar páginas abertas como
+arquivo local e outros contextos sem uma origem comum; ela não identifica um
+arquivo local específico.
 
-## Inicialização e encerramento do servidor: futuros
+Uma lista vazia não libera nenhuma origem pelo CORS. Ela não impede clientes que
+não aplicam CORS, como ferramentas de terminal. O tratamento das requisições do
+navegador ainda não está implementado; veja [Segurança](security.md).
 
-O parser da etapa 2 será componente deste startup, ainda não integrado:
+## Configuração do modelo P2P
 
-1. Ler CLI/ambiente, aplicar precedência e validar configuração com Zod.
-2. Resolver raiz existente e verificar diretório, acesso e separação dos privados.
-3. Preparar estado/staging privados, verificando propriedade e filesystem.
-4. Validar ou preparar certificado/chave conforme o modo.
-5. Carregar ou gerar credenciais, sem expô-las em logs ou respostas.
-6. Criar servidor HTTPS e tratar o resultado real de bind, inclusive porta ocupada.
-7. Informar prontidão após escuta efetiva, sem afirmar disponibilidade de todas as
-   operações do filesystem com base apenas nesse evento.
+A instalação deverá preparar uma identidade local persistente, um local privado
+para os peers conhecidos e uma área temporária para transferências. Os nomes das
+novas opções, caminhos padrão por sistema e formato de armazenamento ainda não
+estão definidos. Nenhum comando atual gera essa identidade ou cadastra peers.
 
-Falha de preparação deverá impedir escuta e produzir diagnóstico local sem segredos,
-com término diferente de zero. Não instalar dependências, alterar firewall, instalar
-confiança nos clientes ou liberar porta encerrando processos de terceiros.
+A descoberta terá ativação explícita, destinos locais delimitados e limites de
+tempo, quantidade e concorrência. Os parâmetros pertencem ao controle local
+explicado em [Conectar dispositivos](connection.md).
 
-Em `SIGINT`/`SIGTERM`, a proposta é parar novas requisições, aguardar operações até
-o prazo configurado e cancelar as restantes, fechando streams e removendo somente
-temporários do processo. Interrupção antes da publicação deverá preservar o destino
-anterior; publicação concluída não deverá ser desfeita. Sinais não capturáveis e
-queda de energia poderão deixar temporários; não há promessa de limpeza nesses
-casos. O comando atual termina imediatamente e não implementa esse encerramento.
+A política antiga de gerar tokens a cada execução e renovar certificados por
+prazos fixos não define o funcionamento P2P. Reinício e mudança de IP precisam
+preservar identidade. Renovação de certificado exigirá continuidade de confiança
+verificável ou novo pareamento.
 
-## Plataforma e verificações
-
-A etapa 2 foi preparada em Linux x86_64, Node.js 24.19.0 e npm 11.17.0. O manifesto
-limita a plataforma a Linux. Isso não anuncia disponibilidade ou verificação da API
-de arquivos e do transporte HTTPS. Windows e macOS não têm suporte neste MVP;
-não inferir compatibilidade da portabilidade das dependências.
-
-`npm run check` executou verificação de tipos, build e 46 testes: 46 aprovados,
-nenhuma falha e nenhum teste ignorado. A suíte cobre configuração e estrutura mínima,
-não autenticação, isolamento físico ou HTTPS. Procedimentos e resultados completos,
-inclusive reprodução do lock e comandos de conferência, ficam em
-[testing.md](testing.md).
+No Linux, os dados privados poderão usar permissões de dono. No Windows, a
+proteção precisa de ACLs. Os requisitos estão em [Linux e Windows](platforms.md).
+A instalação não mudará o firewall nem adicionará confiança global a certificados.
