@@ -196,9 +196,12 @@ permissões e mecanismos de publicação precisam respeitar o sistema operaciona
 Não se pode obter suporte a Windows apenas trocando o separador de pastas.
 Veja [Linux e Windows](platforms.md).
 
-Cada instância usará um único processo. A forma de coordenar operações simultâneas
-sobre o mesmo arquivo ainda precisa ser definida. Uma trava interna não impede
-que outros programas alterem a pasta diretamente.
+Cada instância usará um único processo. Durante envio, cópia e movimentação, a
+aplicação deverá permitir leitura e edição por outros programas, respeitando as
+restrições do sistema operacional. Não deverá impor bloqueio exclusivo sobre
+esses arquivos. A forma de coordenar requisições simultâneas da própria API ainda
+precisa ser definida; uma trava interna não controla alterações externas.
+Conteúdo lido durante uma edição pode não representar uma versão fixa do arquivo.
 
 Uploads e cópias deverão preparar o resultado em uma área privada antes de
 colocá-lo no destino. Operações recursivas não garantem desfazer tudo em caso de

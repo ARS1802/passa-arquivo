@@ -93,7 +93,7 @@ existência de classes ou tipos com esses nomes no código.
 | 403 | `path_forbidden` | Caminho proibido | Caminho absoluto, segmento `..`, escape da raiz ou tentativa identificável de atingir estado privado/interno. |
 | 403 | `entry_forbidden` | Operação proibida sobre a entrada | Symlink direto, intermediário ou encontrado em árvore; entrada especial; excluir/mover/renomear/copiar a raiz. Arquivo com mais de um hard link detectável (`nlink > 1`), conforme [arquivos e pastas](filesystem.md). |
 | 404 | `entry_not_found` | Entrada não encontrada | Entrada de origem ausente, diretório consultado ausente, ou diretório pai necessário inexistente nas operações que não o criam. |
-| 409 | `entry_conflict` | Conflito de entrada | Destino existente sem sobrescrita permitida; incompatibilidade entre arquivo/diretório; componente intermediário que não é diretório; diretório não vazio sem `recursive=true`; tentativa de substituir ou mesclar diretórios. |
+| 409 | `entry_conflict` | Conflito de entrada | Destino existente sem sobrescrita permitida; incompatibilidade entre arquivo/diretório; componente intermediário que não é diretório; tentativa de substituir ou mesclar diretórios. Ter conteúdo não impede a exclusão de uma pasta. |
 | 409 | `cross_device_operation` | Operação entre filesystems não suportada | `EXDEV` ou incompatibilidade identificada de filesystem impede movimentação/publicação com as garantias adotadas; não contornar silenciosamente por cópia seguida de exclusão. Travessia detectada para dispositivo diferente, sem prometer detecção completa de montagens, conforme [arquivos e pastas](filesystem.md). |
 | 413 | `payload_too_large` | Limite de tamanho excedido | Arquivo de upload excede o limite configurado. Corpo JSON excede `PASSA_JSON_MAX_BYTES`; ZIP excede volume não comprimido ou quantidade de entradas permitidos, detectado antes de enviar os headers de sucesso. |
 | 415 | `unsupported_media_type` | Tipo de mídia não suportado | Endpoint JSON recebe Content-Type ausente/incompatível; upload recebe tipo diferente de multipart/form-data. Falha na estrutura de um multipart declarado pertence a `malformed_request`. |
@@ -118,7 +118,8 @@ de informar um caminho proibido ou de pedir um arquivo que não existe.
 | `path=a%252Fb` em query | Tratar como nome literal `a%2Fb`, sujeito às outras regras | Não decodificar `%2F` novamente. |
 | `path=a//b`, `path=a/` ou `path=a/./b` | 400 `invalid_path` | Formas ambíguas recusadas pelas regras de caminho. |
 | `path=%2Fetc%2Fpasswd` | 403 `path_forbidden` | Caminho absoluto após decodificação. |
-| Query `recursive=1` ou `recursive=null` | 422 `validation_failed` | Somente `true` ou `false` são booleanos aceitos na URL. |
+| `DELETE` com query `recursive`, inclusive `true` ou `false` | 422 `validation_failed` | Parâmetro desconhecido; a exclusão de pastas já inclui seu conteúdo. |
+| `DELETE` de pasta com conteúdo, apenas com `path` | 204 se a operação tiver sucesso | Não é necessária opção adicional para percorrer e excluir o conteúdo. |
 | JSON com `"overwrite": "false"` | 422 `validation_failed` | String não equivale a booleano JSON. |
 | `PATCH` com `{}` ou somente `overwrite` | 422 `validation_failed` | Deve informar `name` ou `parentPath`. |
 | `PATCH` com `"name": null` | 422 `validation_failed` | `null` não é omissão. |

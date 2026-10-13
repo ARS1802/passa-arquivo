@@ -10,3 +10,4 @@
 *.pem
 *.crt
 tokens.json
+/.codex/

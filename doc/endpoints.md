@@ -50,6 +50,11 @@ enviado junto da requisição. Consulte também as regras de
 - Downloads não garantem o cabeçalho `Content-Length`. Downloads parciais com
   Range, ETags, paginação, tarefas em segundo plano e compatibilidade com versões
   anteriores da API ficam fora do escopo inicial.
+- Durante envio, cópia e movimentação, a aplicação não deverá impor bloqueios
+  que impeçam outros programas de ler ou editar os arquivos envolvidos.
+  Isso não contorna restrições do sistema operacional nem garante uma versão
+  fixa do conteúdo. `overwrite` controla a substituição de um destino existente,
+  não o acesso simultâneo. Veja [concorrência e limites](filesystem.md#operações-ao-mesmo-tempo-e-falhas-parciais).
 
 ### Caminho relativo: `RelativePath`
 
@@ -341,6 +346,14 @@ arquivo aos poucos (*streaming*) e o guardará em uma área temporária privada
 (*staging*). Só depois de receber e conferir tudo colocará o arquivo no destino
 final; essa passagem é chamada de publicação.
 
+O programa que envia o arquivo também deverá permitir sua leitura e edição por
+outros programas, respeitando o sistema operacional. Se houver edições durante
+a leitura, os bytes enviados podem não representar uma única versão do arquivo.
+Um destino já existente continua sujeito a alterações externas enquanto o upload
+é preparado; a publicação substituirá o arquivo pelo conteúdo recebido, podendo
+substituir também essas edições. Um arquivo novo só ficará disponível no destino
+depois da publicação.
+
 Se o envio falhar ou a conexão cair antes da publicação, o arquivo anterior será
 preservado e os temporários da operação serão removidos. Não há opção `overwrite`
 nessa rota: enviar um arquivo para um caminho já ocupado por outro arquivo
@@ -402,20 +415,26 @@ Você cria a pasta projetos dentro de documentos; repetir o pedido mantém tudo 
 
 **DELETE /api/v2/entries**
 
-Remove o arquivo ou pasta indicado em `path`.
+Remove o arquivo ou pasta indicado em `path`, com ou sem conteúdo. Ao excluir
+uma pasta, remove também seus arquivos e subpastas, sem opção adicional.
 
 | Local/campo | Tipo | Obrigatório/padrão | Restrições |
 | --- | --- | --- | --- |
 | Query: `path` | `RelativePath` | Sim; sem padrão | Arquivo regular ou diretório; raiz proibida. |
-| Query: `recursive` | boolean no contrato | Não; `false` | strings exatas `true` ou `false` na URL; rejeitar `1`, `0`, vazio e variações de caixa. |
 | Conexão TLS | Certificado do peer e prova de posse da chave | Sim | Confiança bilateral concluída. |
 | Rota/corpo | Ausentes | Não aplicável | Não recebe corpo. |
 
 **Content-Type aceito:** não aplicável. **Resposta:** `204`, sem corpo e sem Content-Type de representação.
 
-**Erros possíveis:** compartilhados de caminhos; `404 entry_not_found` para entrada ausente; `409 entry_conflict` para diretório não vazio quando `recursive=false` ou intermediário incompatível; `403 entry_forbidden` para a raiz e entradas proibidas encontradas na árvore.
+**Erros possíveis:** compartilhados de caminhos; `404 entry_not_found` para entrada ausente; `409 entry_conflict` para intermediário incompatível; `403 entry_forbidden` para a raiz e entradas proibidas encontradas na árvore. Uma pasta ter conteúdo não é motivo de conflito.
 
-**Como funciona:** arquivo regular ou diretório vazio pode ser excluído sem recursão. Diretório não vazio requer `recursive=true`. Não segue symlinks durante a operação. Não há destino nem lixeira. Exclusão recursiva pode falhar parcialmente; não promete recuperação dos arquivos e pastas já removidos. A raiz nunca pode ser removida, mesmo com `recursive=true`.
+**Como funciona:** exclui arquivos regulares e pastas vazias ou com conteúdo.
+A operação percorre subpastas automaticamente. A query aceita somente `path`;
+`recursive` não faz parte do contrato e será rejeitado como parâmetro desconhecido
+com `422 validation_failed`, qualquer que seja seu valor. As regras de acesso e
+caminhos continuam valendo: não segue nem remove symlinks e nunca exclui a raiz
+compartilhada. Não há lixeira. Uma falha durante a exclusão de uma árvore pode
+deixar parte dela já removida, sem recuperação automática.
 
 Se você repetir a exclusão e a entrada continuar ausente, receberá `404`. O efeito
 final continuará o mesmo: o arquivo ou pasta não existe mais. Isso é a
@@ -426,18 +445,21 @@ idempotência de `DELETE`; ela não exige repetir o mesmo código de resposta.
 ```sh
 curl --cacert "$PEER_CERT" --cert "$LOCAL_CERT" --key "$LOCAL_KEY" \
   --request DELETE \
-  "$BASE_URL/api/v2/entries?path=documentos%2Fnota.txt&recursive=false"
+  "$BASE_URL/api/v2/entries?path=documentos%2Fnota.txt"
 ```
 
 ### Exemplo de uso
 
-Você apaga nota.txt; apagar uma pasta que contém arquivos exige marcar a exclusão recursiva explicitamente.
+Você apaga nota.txt informando seu caminho. Para apagar a pasta documentos com
+tudo que ela contém, usa `DELETE /api/v2/entries?path=documentos`, sem parâmetro
+adicional. As mesmas regras de proteção se aplicam aos itens dentro da pasta.
 
 ## E08 — Mover ou renomear
 
 **PATCH /api/v2/entries**
 
-Muda o nome, a pasta que contém a entrada ou os dois de uma vez.
+Move um arquivo ou pasta mantendo seu nome, renomeia sem mover ou faz as duas
+alterações no mesmo pedido. Mover não exige renomear.
 
 | Local/campo | Tipo | Obrigatório/padrão | Restrições |
 | --- | --- | --- | --- |
@@ -459,9 +481,17 @@ regras de `RelativePath`.
 **Erros possíveis:** compartilhados de caminhos/corpos; `404 entry_not_found` para origem ou pai de destino ausente; `409 entry_conflict` para conflito sem `overwrite`, tipos incompatíveis, pai que não seja diretório ou tentativa de substituir/mesclar diretórios; `403 entry_forbidden` para mover/renomear a raiz; `422 validation_failed` para mover diretório a um descendente; `409 cross_device_operation` quando a operação entre filesystems não puder manter as garantias adotadas.
 
 **Como funciona:** `name` muda o nome e `parentPath` muda a pasta que contém a
-entrada. Quando os dois são enviados, formam um único destino final. A pasta de
-destino precisa existir. A operação não juntará nem substituirá árvores de
+entrada. Enviar somente `parentPath` move mantendo o nome; enviar somente `name`
+renomeia mantendo a pasta atual. Quando os dois são enviados, formam um único
+destino final. A pasta de destino precisa existir. A operação não juntará nem
+substituirá árvores de
 pastas e não removerá uma pasta que contenha a origem.
+
+`overwrite=true` autoriza substituir um arquivo de destino existente; não
+desbloqueia arquivos. A aplicação não deverá impedir leitura ou edição por
+outros programas durante a movimentação. O sistema operacional ainda poderá
+recusar a operação por causa de um arquivo aberto. Mover também muda o caminho
+de acesso: não há garantia de que o caminho antigo continue disponível.
 
 Se o sistema recusar a movimentação entre sistemas de arquivos (`EXDEV`), a API
 não tentará copiar e depois apagar a origem. Os limites das operações estão em
@@ -472,18 +502,21 @@ Repetir a mesma URL retornará `404`. Se o pedido manteve o caminho original,
 repeti-lo retornará `200` enquanto a entrada existir. O servidor não reconhecerá
 automaticamente uma tentativa repetida como a mesma operação anterior.
 
-**Exemplo de requisição:** exige origem e diretório `documentos/finalizados` existentes.
+**Exemplo de requisição:** move sem renomear; exige origem e diretório
+`documentos/finalizados` existentes.
 
 ```sh
 curl --cacert "$PEER_CERT" --cert "$LOCAL_CERT" --key "$LOCAL_KEY" \
   --header 'Content-Type: application/json' --request PATCH \
-  --data '{"name":"nota-final.txt","parentPath":"documentos/finalizados","overwrite":false}' \
+  --data '{"parentPath":"documentos/finalizados","overwrite":false}' \
   "$BASE_URL/api/v2/entries?path=documentos%2Fnota.txt"
 ```
 
 ### Exemplo de uso
 
-Você muda nota.txt para a pasta finalizados e passa a chamá-lo nota-final.txt no mesmo pedido.
+Você move nota.txt para a pasta finalizados e mantém o nome nota.txt. Para
+renomear sem mover, envia somente `{"name":"nota-final.txt"}`. Para mover e
+renomear juntos, envia `name` e `parentPath` no mesmo corpo.
 
 ## E09 — Copiar um arquivo ou pasta
 
@@ -511,6 +544,13 @@ Se ela falhar, o destino anterior será preservado e apenas os temporários da
 operação serão removidos. Se outro programa alterar os arquivos de origem
 durante a leitura, o resultado não terá garantia de representar um único
 instante da pasta.
+
+Outros programas poderão ler e editar a origem e um destino existente durante
+a cópia, respeitando o sistema operacional. Se houver mudanças na origem, os
+bytes copiados podem não representar uma única versão do arquivo. Com
+`overwrite=true`, publicar a cópia pode substituir edições feitas no destino
+durante a preparação. Esse campo permite substituir o destino; não é um
+comando para bloquear ou desbloquear arquivos.
 
 Repetir a cópia sem permitir substituição normalmente retornará `409`, pois o
 destino já existe. Com `overwrite=true` entre arquivos comuns, retornará `200`

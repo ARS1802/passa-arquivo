@@ -15,7 +15,7 @@ O histórico integral está em [history-before-p2p.md](history-before-p2p.md).
 | 3 — Autenticação e caminhos | Apenas desenho | A autenticação deve anteceder operações de arquivos. Comparar prefixos de strings não protege a raiz; verificar componentes, links e caminhos privados. Bearer foi substituído pelo modelo de certificados entre peers. Linux e Windows exigem mecanismos distintos. |
 | 4 — Saúde, metadados, listagem e download | Apenas contrato | Metadados precisam de formato comum; `size: null` evita prometer tamanho recursivo de pastas. Transferir por partes e tratar falhas antes/depois dos cabeçalhos. Leitura concorrente não garante um retrato fixo dos dados. |
 | 5 — Pastas e upload | Apenas contrato | Receber em área privada antes de publicar; falha anterior à publicação preserva destino. Repetir PUT de pasta mantém conteúdo. Pais criados antes de uma falha podem permanecer. |
-| 6 — Exclusão e movimentação | Apenas contrato | Proteger a raiz; exigir exclusão recursiva explícita. Renomear e mover formam um único destino. Não substituir movimentação entre sistemas de arquivos por cópia seguida de exclusão sem garantia equivalente. |
+| 6 — Exclusão e movimentação | Apenas contrato | Proteger a raiz. A antiga exigência de recursividade explícita foi substituída por D14: excluir pasta já inclui seu conteúdo. Mover preserva o nome, salvo renomeação solicitada; ambos podem formar um único destino. Não substituir movimentação entre sistemas de arquivos por cópia seguida de exclusão sem garantia equivalente. |
 | 7 — Cópia e ZIP | Apenas contrato | Montar cópia antes de substituir destino. Não misturar árvores. ZIP precisa de limites durante a leitura, nomes relativos, pastas vazias e limpeza. Não carregar arquivos inteiros em memória. |
 | 8 — HTTPS, certificados e CORS | Apenas desenho; sem servidor | Confiança precisa ser verificada em conexões reais. CORS não autentica peers. Certificados agora são identidades persistentes: regenerá-los em cada início ou ao mudar o IP destruiria a confiança. Pareamento deve ser isolado do acesso a arquivos. |
 | 9 — Revisão final | Não iniciada | Conferir contrato, código e testes juntos. Um teste ignorado não demonstra suporte. Linux↔Windows, mudança de IP, reinício, erro de código e troca de certificado precisam de evidência própria. |
@@ -33,6 +33,10 @@ O histórico integral está em [history-before-p2p.md](history-before-p2p.md).
 
 ## Premissas que não devem ser reaplicadas
 
+- Exigir `recursive=true` para excluir uma pasta com conteúdo; ver D14 em
+  [decisions.md](decisions.md).
+- Interpretar `overwrite` como desbloqueio ou impedir edição externa durante
+  envio, cópia e movimentação; D14 separa substituição e acesso simultâneo.
 - Linux como única plataforma do produto.
 - Bearer como identidade dos peers e tokens descartáveis a cada execução.
 - mTLS e persistência de peers fora do escopo.

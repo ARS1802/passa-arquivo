@@ -161,8 +161,8 @@ O [guia de rotas](endpoints.md) traz os parâmetros, respostas e exemplos comple
 | Download | Envia somente arquivo regular, aos poucos, sem carregá-lo inteiro na memória; usa nome seguro em `Content-Disposition` e tipo de conteúdo apropriado ou `application/octet-stream`; uma pasta não vira ZIP automaticamente |
 | Upload | Recebe exatamente uma parte de arquivo chamada `file`; `path` define o destino completo, cujo pai precisa existir; prepara o conteúdo em staging; cria com `201` ou substitui arquivo regular com `204`; pasta no destino resulta em `409` |
 | Criação de pasta | Cria pais ausentes; nova pasta resulta em `201`; pasta já existente, inclusive `.`, resulta em `200` e mantém o conteúdo; arquivo em um componente necessário resulta em `409` |
-| Exclusão | Exclui arquivo ou pasta vazia; pasta não vazia exige `recursive=true`, senão retorna `409`; raiz proibida; sucesso `204`, ausência `404` |
-| Renomeação e movimentação | Aceita `name` e/ou `parentPath`, com pai de destino existente; os dois campos formam uma única operação; um campo omitido mantém seu valor atual; sem mudança, retorna `200`; não move a raiz nem uma pasta para dentro de si mesma |
+| Exclusão | Exclui arquivo ou pasta, com ou sem conteúdo; percorre subpastas automaticamente, sem parâmetro `recursive`; mantém as restrições de caminhos e entradas; raiz proibida; sucesso `204`, ausência `404` |
+| Renomeação e movimentação | Somente `parentPath` move mantendo o nome; somente `name` renomeia mantendo a pasta; ambos permitem mover e renomear juntos, com pai de destino existente; sem mudança, retorna `200`; não move a raiz nem uma pasta para dentro de si mesma |
 | Cópia | Recebe o caminho final completo, com pai existente; não acrescenta o nome de origem automaticamente; não copia a raiz, uma entrada sobre si mesma ou uma pasta para dentro de si mesma; cria com `201`; substituição permitida de arquivo resulta em `200` |
 | Compactação | Recebe somente pasta, inclusive a raiz; envia ZIP aos poucos, sem guardá-lo inteiro na memória; usa nomes relativos à pasta solicitada e preserva pastas vazias; não cria ZIP permanente nem tarefa persistente |
 
@@ -178,6 +178,10 @@ Somente um arquivo regular pode substituir outro arquivo regular. Não há
 substituição de pastas nem junção de árvores de diretórios. O destino não é
 removido antes de preparar a cópia, e uma pasta que contém a própria origem não
 pode ser removida para abrir espaço.
+
+`overwrite` trata apenas da autorização para substituir o arquivo que já está
+no destino. Não é uma opção de bloqueio: leitura e edição por outros programas
+durante envio, cópia e movimentação seguem a regra de acesso simultâneo abaixo.
 
 Os códigos para algumas recusas ainda estão em definição: `403 entry_forbidden`
 ao tentar modificar a raiz de forma proibida; `422 validation_failed` ao mover
@@ -199,6 +203,10 @@ colocar o novo conteúdo no lugar. O arquivo é recebido ou preparado aos poucos
 em staging privado, conferido por completo e só então publicado no destino.
 Temporários não podem aparecer na listagem, no download, na cópia ou no ZIP da
 pasta compartilhada.
+
+Preservar o destino em uma falha significa que a operação não o substitui nem
+o apaga antes da publicação. Isso não congela o conteúdo nem desfaz edições
+realizadas por outros programas enquanto a operação estava em andamento.
 
 Os detalhes dessa preparação ainda estão em definição: staging fora da raiz e
 no mesmo sistema de arquivos do destino. No Linux, pastas de permissão `0700`
@@ -243,12 +251,32 @@ ZIP e a forma de preparar o arquivo ainda não foram escolhidas.
 
 ## Operações ao mesmo tempo e falhas parciais
 
+Durante envio, cópia e movimentação, a aplicação não deverá impor bloqueios
+exclusivos que impeçam outros programas de ler ou editar os arquivos envolvidos.
+Essa regra abrange a origem lida pelo programa remetente e, quando existente,
+o destino no dispositivo que recebe a operação. Não exige que outros programas
+fechem seus arquivos para iniciar uma tentativa, mas respeita permissões e
+restrições de arquivos abertos impostas pelo sistema operacional.
+
+Permitir edição durante a leitura significa que o conteúdo enviado ou copiado
+pode conter partes lidas em momentos diferentes. Não há garantia de uma versão
+fixa nem detecção garantida de toda alteração externa. Se o destino existente
+for editado enquanto o upload ou a cópia é preparado, a publicação poderá
+substituir também essas edições. Isso segue a substituição já prevista pelo PUT
+de upload ou autorizada com `overwrite=true` na cópia e na movimentação; não
+há mesclagem de conteúdo ou comparação de versões definida.
+
+Staging continua privado. Um novo arquivo só aparece no destino depois da
+publicação. Mover pode fazer o caminho antigo deixar de existir; a ausência de
+bloqueio não promete manter esse caminho acessível nem conservar todas as formas
+de acesso de um programa que já abriu o arquivo. Se o sistema recusar a operação,
+a API deverá informar a falha sem forçar o desbloqueio ou encerrar outro programa.
+
 O servidor usa um único processo, sem exigir múltiplos workers. A coordenação
-das operações ainda está em definição. Uma possibilidade é usar um mutex por
-raiz: uma trava dentro do programa para que alterações conflitantes, incluindo
-a conferência final e a publicação, esperem umas pelas outras. Receber um upload
-em staging não altera seu destino antes da hora. A coordenação das leituras e
-das operações que percorrem pastas também precisa ser definida.
+das requisições da própria API ainda está em definição. Uma trava interna poderá
+ordenar alterações conflitantes da API, mas não deverá ser convertida em bloqueio
+do arquivo para outros programas. Sua granularidade e duração ainda não foram
+escolhidas. Receber um upload em staging não altera seu destino antes da hora.
 
 Usar Promises não faz as operações esperarem automaticamente umas pelas outras.
 Entre conferir um caminho e usá-lo, outro programa pode alterá-lo. Abrir um
@@ -270,6 +298,9 @@ ser verificadas.
 | Criação de várias pastas pais falha | Pais já criados podem permanecer; não é seguro remover pastas que possam ter recebido conteúdo |
 | Exclusão recursiva falha | Algumas entradas podem já ter sido excluídas; não há desfazer automático nem lixeira |
 | Download ou ZIP durante escrita externa | Não há uma visão congelada dos dados; falhas detectadas podem encerrar a transferência |
+| Edição da origem durante envio ou cópia | Conteúdo pode refletir leituras de momentos diferentes; não há versão fixa garantida |
+| Edição do destino antes da publicação | Substituição prevista no upload ou autorizada por `overwrite=true` pode substituir também as edições simultâneas |
+| Movimentação com arquivo aberto | Sistema operacional pode recusar; caminho antigo pode deixar de existir após sucesso |
 | Outro processo altera links, nomes ou montagens | A trava interna da aplicação não impede essas alterações |
 | Falha após salvar o arquivo ou começar a resposta | Não há garantia de reversão; uma resposta já iniciada não pode ser trocada por JSON |
 

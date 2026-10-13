@@ -30,7 +30,7 @@ acessar áreas privadas precisam ser recusados.
 | Nomes e maiúsculas | Não presumir que nomes que diferem apenas por maiúsculas identificam arquivos distintos em todo disco. Detectar conflito no destino, sem renomear silenciosamente. |
 | Nomes inválidos | O Windows reserva nomes como `CON` e `NUL`, caracteres como `:` e formas terminadas em ponto ou espaço. Uma transferência pode precisar ser recusada mesmo que o nome exista na origem. |
 | Links e atalhos do sistema de arquivos | A proteção precisa considerar links simbólicos e, no Windows, junctions e outros reparse points capazes de redirecionar acesso. |
-| Arquivos abertos | Exclusão, substituição e movimentação podem falhar por compartilhamento de handles. O cliente precisa receber um erro claro, preservando o destino anterior quando aplicável. |
+| Arquivos abertos | Durante envio, cópia e movimentação, a aplicação não deverá impedir leitura ou edição por outros programas. O sistema operacional ainda pode recusar acesso, exclusão ou substituição conforme a forma como o arquivo foi aberto. A API deve informar a falha, preservando o destino anterior quando aplicável, sem forçar desbloqueio. |
 | Discos diferentes | Não presumir que uma renomeação ou publicação funciona entre volumes. A área temporária precisa ser compatível com a operação no destino. |
 | Caminhos longos | O limite depende do sistema e de sua configuração. Não prometer suporte sem verificação em cada plataforma. |
 

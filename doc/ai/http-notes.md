@@ -2,8 +2,10 @@
 
 Registro preservado antes da correção de linguagem em 2026-09-17. Os trechos
 abaixo distinguem detalhes que ainda eram propostas, sem atribuir aprovação ao
-usuário nem implementação ao código. A forma de apresentação pública muda; o
-estado dessas decisões continua o mesmo.
+usuário nem implementação ao código. São registros históricos: D13 substitui
+o modelo de autenticação e D14 remove a opção `recursive` da exclusão e esclarece
+o acesso simultâneo. Consulte [decisions.md](decisions.md) e os
+[endpoints atuais](../endpoints.md) antes de reutilizar estes trechos.
 
 ## Trechos de endpoints.md
 

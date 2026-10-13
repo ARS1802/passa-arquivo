@@ -1,6 +1,7 @@
 # Registro de decisões
 
 O pedido P2P de D13 substitui premissas incompatíveis dos registros anteriores.
+D14 atualiza exclusão, movimentação e acesso simultâneo a arquivos.
 O plano antigo foi abandonado; consultar [progress.md](progress.md) antes de agir.
 
 ## Convenções
@@ -291,3 +292,36 @@ a organização e o estilo documental descritos em D09.
   autorizam acrescentar GraphQL, paginação, OpenAPI, banco ou código ao projeto.
 - Retomada: somente documentação. Nenhuma etapa antiga de implementação será
   retomada; novo plano depende de pedido do usuário depois da documentação.
+
+## D14 — Exclusão, movimentação e arquivos disponíveis durante operações
+
+- Data: 2026-10-13.
+- Estado: **aprovada pelo usuário**, com esclarecimentos explícitos sobre acesso
+  simultâneo e substituição; contrato documental, sem implementação.
+- Exclusão: arquivos e pastas podem ser excluídos com ou sem conteúdo. O DELETE
+  percorre subpastas automaticamente; `recursive` deixa de integrar o contrato.
+  Sua presença é erro de parâmetro desconhecido. Permanecem a autenticação,
+  a proteção da raiz, as restrições de caminhos/entradas e a possibilidade de
+  falha parcial sem recuperação automática.
+- Movimentação: `parentPath` sozinho move mantendo o nome; `name` sozinho renomeia
+  mantendo a pasta. Ambos podem ser enviados juntos. Isso esclarece o contrato
+  parcial de PATCH já existente, sem exigir renomeação ao mover.
+- Acesso simultâneo: envio, cópia e movimentação não deverão impor bloqueio
+  exclusivo que impeça outros programas de ler ou editar origem e destino
+  existente, respeitando permissões e restrições do sistema operacional.
+- Substituição: o usuário confirmou a manutenção de `overwrite=true` para
+  substituir arquivos em cópia e movimentação. Essa autorização não é um comando
+  de desbloqueio. O PUT de upload mantém a substituição prevista no contrato.
+- Consequências: edições na origem podem afetar o conteúdo transferido; publicar
+  sobre um destino existente pode substituir edições simultâneas. Não se promete
+  versão fixa, mesclagem, preservação do caminho antigo após mover ou capacidade
+  de contornar restrições de outros programas. Staging continua privado.
+- Coordenação interna: ordenar requisições da API não equivale a impedir edição
+  externa. O mecanismo permanece em definição e deve respeitar este requisito.
+- Substitui: exigência de recursividade explícita no pedido histórico e nas notas
+  anteriores. Limita qualquer proposta de concorrência de D06 que pudesse ser
+  interpretada como bloqueio exclusivo dos arquivos contra outros programas.
+- Documentos: [rotas](../endpoints.md), [arquivos](../filesystem.md),
+  [erros](../errors.md), [testes futuros](../testing.md),
+  [arquitetura](../architecture.md) e [plataformas](../platforms.md).
+  `requirements.md` permanece como registro histórico original.
