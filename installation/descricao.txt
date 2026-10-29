@@ -1,0 +1,7 @@
+Neste diretório, há subpastas para diferentes sistemas operacionais, cada um possui um script de instalação e um README.md sobre a descrição do oque fazem.
+
+Estes scripts existem com a finalidade de :
+- Facilitar a verificação da presença ferramentas necessárias como o Node.
+- Especificar, através de variavéis de ambiente se é a primeira execução do sistema ou não. Isso afeta se peerService gera uma identidade nova ou não.
+- Facíl execução, uma das finalidades dos scripts é criar um atalho na área de trabalho do respecitvo sistema operacional para facíl inicialização do projeto - claramente em estágio beta.
+Por exemplo, suponha que posso subir os localhost necessários com um comando 'npm run app' e o sistema operacional é Windows, ao executar este script, será criado um .cmd o qual é chamado por um atalaho na Área de Trabalho.

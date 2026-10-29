@@ -1,0 +1,12 @@
+Aqui fica a documentação.
+Informações que precisam ser claros nela:
+    - Tabela (Markdown) relacional das rotas, suas finalidades e parâmetro.
+    - Especificação das regras de seguranças e funcionamento dos peers (não da arquitetura, mas como são salvos e lidados, SEMPRE com exemplos)
+    - Descrição de cada fluxo de uso (SEMPRE com exemplos)
+    - Tecnologias utilizadas
+    - Um documento para cada "como funciona na OS a,b,c..."
+    - Erros que podem surgir. Por exemplo, a descrição de uma exceção disparada ao usuário tentar conectar a dispositivo que não está mais disponível.
+
+Informações que não precisam estar neste diretório:
+    - Finalidade do projeto. Afinal, é algo que pode ser abordado em README.md
+    - Quais plataformas suporta (Windows, linux mint...). Pode ser especificado no README.md e detalhado na documentação - o diretório em questão.

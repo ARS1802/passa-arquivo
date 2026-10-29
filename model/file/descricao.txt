@@ -1,0 +1,1 @@
+Este diretório cumpre a função de um Facade ao encapsular métodos de manipulação de arquivos que serão utilizados pelos arquivos em controller e peer.
