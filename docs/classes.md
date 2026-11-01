@@ -274,15 +274,65 @@ comparação usa `stateDir/tokens.json`; esse arquivo não é criado pela valida
 
 | Item | Uso no projeto |
 | --- | --- |
-| Express | Cria a aplicação em `createApp`. Ainda não há rotas ou servidor recebendo conexões. |
-| Zod | Confere e transforma a configuração, incluindo regras que comparam campos. |
-| Node.js | Executa o comando e oferece funções para IPs, caminhos, URLs e acesso aos dados do processo. |
+| Express | Usado em `controller/api/app.ts`, que atualmente abre a porta 3030 e registra uma rota inicial. |
+| Node.js | Executa o backend e fornece os módulos nativos usados pelo model, descritos abaixo. |
 | TypeScript e pacotes de tipos | Conferem tipos e compilam o código. Essa conferência não substitui a validação dos dados em execução. |
-| Configuração TypeScript | Compila o projeto com verificação estrita e relaciona o JavaScript ao TypeScript original. |
-| Configuração de testes | Estende a configuração principal para compilar e executar os testes. |
-| Arquivo de dependências | Registra as versões resolvidas das dependências. Os comandos estão em [Configuração](configuration.md). |
+| `tsconfig.json` | Compila `model` e `controller` para `dist` na raiz, com `npm run build:backend`. |
+| `package-lock.json` | Registra as versões resolvidas das dependências. |
 
-Os arquivos JavaScript em `dist` e `.test-build` são gerados a partir do TypeScript.
-As funções dos testes estão descritas em [Testes](testing.md). Ainda não há
-bibliotecas instaladas para processar uploads multipart, criar ZIPs ou gerar
-certificados.
+As descrições anteriores de `createApp`, configuração com Zod e suíte em
+`.test-build` pertencem ao desenho anterior e não comprovam a existência desses
+componentes na estrutura atual. O manifesto atual não inclui Zod nem uma suíte
+automatizada: `npm test` ainda informa que nenhum teste foi especificado.
+
+### Bibliotecas utilizadas pelo model
+
+Ao selecionar uma pasta na aplicação, o controller poderá chamar `fileService`,
+que delega o acesso ao disco a `File` e `Directory`. Para preparar a identidade
+local e os registros de dispositivos conhecidos, poderá chamar `peerService`.
+Essas chamadas do controller ainda precisam de integração; os usos abaixo
+descrevem o código do model, sem afirmar que o fluxo completo da interface funciona.
+
+| Biblioteca ou módulo | Onde e como é utilizado |
+| --- | --- |
+| `node-forge` | Em `model/peer/peerService.ts`, `generateIdentity` gera o par RSA de 2048 bits, monta um certificado X.509 autoassinado, assina com SHA-256 e converte certificado e chave para PEM. |
+| `node:crypto` | No mesmo arquivo, `randomBytes` produz a parte aleatória do número de série e `randomUUID` compõe o nome único da instalação. `X509Certificate` interpreta certificados, fornece a impressão SHA-256 usada para comparar identidades e permite verificar assinatura e validade. `createPrivateKey` permite conferir se a chave privada corresponde ao certificado local. |
+| `node:net` | `validatePeerData`, em `peerService.ts`, usa somente `isIP` para conferir o formato do endereço informado. Não abre sockets, descobre dispositivos ou autentica peers. |
+| `node:stream` | `Directory.archive`, em `model/file/Directory.ts`, usa `Readable.from` para fornecer os bytes de cada arquivo ao ZIP por partes. Durante a leitura, conta os bytes não comprimidos e interrompe ao exceder o limite. O fechamento da saída destrói os streams ativos. |
+| `yazl` | `Directory.archive` usa `ZipFile`, `addReadStreamLazy`, `addEmptyDirectory` e `end` para produzir um ZIP em stream, com nomes relativos e pastas vazias. Os arquivos são lidos pelos objetos `File`; o ZIP não é salvo como resultado permanente. |
+
+`node-forge` e `yazl` são pacotes instalados pelo npm, acompanhados por
+`@types/node-forge` e `@types/yazl` para a compilação TypeScript. Os módulos com
+prefixo `node:` pertencem ao próprio Node.js. O nome de importação é
+`node-forge`, não `node:forge`. **YAML não é utilizado**: `yazl` é uma biblioteca
+de ZIP e não um leitor ou escritor de YAML. O índice dos peers usa CSV.
+
+### Identidade e persistência local
+
+`peerService.initialize` recebe explicitamente os caminhos das áreas de estado,
+compartilhamento, staging e repositório. Na primeira execução, prepara a identidade
+em `<stateDir>/tls/server.crt` e `<stateDir>/tls/server.key`. O certificado vale
+por 365 dias, permite uso como cliente e servidor TLS e tem um nome único que
+não depende do IP. Reinícios reutilizam esses arquivos. Identidade incompleta,
+expirada ou incompatível causa erro, sem regeneração automática.
+
+Cada peer ocupa uma pasta de `01` a `99` em `<stateDir>/peers`, contendo
+`certificado.cert`. O arquivo `index.csv` relaciona `directory`, `displayName`,
+`ipAddress`, `firstConnectedAt` e `lastConnectedAt`. Por exemplo, `directory`
+igual a `01` aponta para `<stateDir>/peers/01`. O menor número livre pode ser
+reutilizado após exclusão; com 99 registros, um novo peer é recusado.
+
+O certificado identifica o peer; apelido e IP podem mudar. `savePeer` pressupõe
+pareamento bilateral concluído pelo controller, e `recordConnection` pressupõe
+autenticação mTLS já confirmada. Comparar certificados ou validar um IP no model
+não substitui a prova de posse da chave nem implementa comunicação de rede.
+`localIdentity` fornece certificado e chave somente para uso pelo transporte
+local; a chave não deve ser enviada à GUI ou a outro peer.
+
+`File` e `Directory` realizam a persistência. Os dados privados ficam fora da
+raiz compartilhada e do repositório. A implementação atual verifica permissões
+POSIX; a abertura do armazenamento privado no Windows é recusada enquanto a
+proteção por ACL não estiver definida.
+
+Essas funcionalidades têm implementação, mas sua validação ainda está incompleta.
+O estado das verificações está em [Testes](testing.md#estado-atual-do-model).

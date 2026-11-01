@@ -84,6 +84,12 @@ e campos individuais, veja [Módulos e funções](classes.md).
 | Vite | Ferramenta planejada para o frontend | Desenvolvimento e organização da interface em `GUI` |
 | Zod | Validação de dados | Regras de validação em execução |
 
+O model usa `String.prototype.isWellFormed()` para rejeitar strings com pares
+UTF-16 incompletos na validação de caminhos e apelidos. Esse método está
+disponível a partir do [Node.js 20.0.0 (V8 11.3)](https://nodejs.org/en/blog/release/v20.0.0#v8-113).
+Esse é o mínimo exigido pelo método, não uma alteração da versão de referência
+do projeto descrita em [Configuração](configuration.md).
+
 ```mermaid
 flowchart LR
     VIEW[GUI / Vite] --> CONTROLLER[controller / Express]

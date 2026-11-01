@@ -292,8 +292,9 @@ export class Directory {
   /** Copia a árvore inteira em staging antes de publicar; nunca mescla diretórios.
    * @param targetPath Destino final completo sob a mesma raiz.
    * @param staging Área privada no mesmo sistema de arquivos.
+   * @returns created igual a true após publicar a nova pasta; conflitos lançam erro.
    */
-  async copy(targetPath: string, staging: Directory): Promise<void> {
+  async copy(targetPath: string, staging: Directory): Promise<{ created: boolean }> {
     validatePath(targetPath);
     if (this.path === ".") throw modelError("entry_forbidden", "A raiz não pode ser origem de cópia.");
     if (targetPath === this.path || targetPath.startsWith(`${this.path}/`)) {
@@ -307,21 +308,21 @@ export class Directory {
     } catch (error) { if (errorCode(error) !== "entry_not_found") throw error; }
     const temporary = await staging.temporary();
     let published = false;
-    /** Copia cada entrada por suas operações encapsuladas.
-     * @param source Pasta de origem.
-     * @param destination Caminho relativo à raiz do staging.
-     */
-    async function copyChildren(source: Directory, destination: string): Promise<void> {
-      for (const entry of await source.list()) {
-        const target = `${destination}/${path.posix.basename(entry.path)}`;
-        if (entry instanceof Directory) {
-          await staging.create(target);
-          await copyChildren(entry, target);
-        } else await entry.copy(staging.file(target), staging);
-      }
-    }
     try {
-      await copyChildren(this, temporary.path);
+      const directoriesToCopy: Array<{ source: Directory; destination: string }> = [
+        { source: this, destination: temporary.path },
+      ];
+      // As subpastas encontradas entram na fila para as próximas iterações.
+      for (let index = 0; index < directoriesToCopy.length; index++) {
+        const { source, destination } = directoriesToCopy[index]!;
+        for (const entry of await source.list()) {
+          const target = `${destination}/${path.posix.basename(entry.path)}`;
+          if (entry instanceof Directory) {
+            await staging.create(target);
+            directoriesToCopy.push({ source: entry, destination: target });
+          } else await entry.copy(staging.file(target), staging);
+        }
+      }
       await this.inspect(this.path, "directory");
       try {
         await this.inspect(targetPath);
@@ -335,6 +336,7 @@ export class Directory {
         throw error;
       }
       published = true;
+      return { created: true };
     } finally { if (!published) await temporary.remove(); }
   }
 

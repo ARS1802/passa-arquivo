@@ -92,9 +92,17 @@ export class File {
     if (typeof overwrite !== "boolean" || !Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
       throw modelError("validation_failed", "Informe sobrescrita e limite de bytes válidos.");
     }
-    let existed = false;
-    try { await this.#directory.inspect(this.path, "file"); existed = true; }
-    catch (error) { if (errorCode(error) !== "entry_not_found") throw error; }
+    /** Confere o destino atual; somente ausência permite continuar como criação. */
+    const destinationExists = async (): Promise<boolean> => {
+      try {
+        await this.#directory.inspect(this.path, "file");
+        return true;
+      } catch (error) {
+        if (errorCode(error) === "entry_not_found") return false;
+        throw error;
+      }
+    };
+    let existed = await destinationExists();
     if (existed && !overwrite) throw modelError("entry_conflict", "O arquivo de destino já existe.");
     await this.#directory.inspect(path.posix.dirname(this.path), "directory");
     const temporary = await staging.temporary();
@@ -115,9 +123,7 @@ export class File {
         await handle.sync();
       } finally { await handle.close(); }
       // Revalida o destino depois de consumir a fonte: ela pode ter levado tempo ou falhado.
-      existed = false;
-      try { await this.#directory.inspect(this.path, "file"); existed = true; }
-      catch (error) { if (errorCode(error) !== "entry_not_found") throw error; }
+      existed = await destinationExists();
       if (existed && !overwrite) throw modelError("entry_conflict", "O arquivo de destino já existe.");
       const parent = await this.#directory.inspect(path.posix.dirname(this.path), "directory");
       const destination = path.join(parent.absolutePath, path.posix.basename(this.path));

@@ -104,13 +104,15 @@ export async function move(sourcePath: string, changes: { name?: string; parentP
   const parent = await root.entry(parentPath);
   if (!(parent instanceof Directory)) throw modelError("entry_conflict", "O pai de destino precisa ser uma pasta.");
   const source = await root.entry(sourcePath);
-  return (await source.move(parentPath === "." ? name : `${parentPath}/${name}`, changes.overwrite ?? false)).metadata();
+  const targetPath = path.posix.join(parentPath, name);
+  return (await source.move(targetPath, changes.overwrite ?? false)).metadata();
 }
 
 /** Copia um arquivo ou árvore para um destino completo, sem criar pais nem mesclar pastas.
  * @param sourcePath Origem relativa à raiz.
  * @param targetPath Destino final completo relativo à raiz.
  * @param overwrite Autoriza somente substituir arquivo regular por arquivo regular.
+ * @returns Metadados e indicação de criação fornecida pela operação de cópia; falhas são propagadas.
  */
 export async function copy(sourcePath: string, targetPath: string, overwrite = false): Promise<{ entry: EntryMetadata; created: boolean }> {
   const root = selectedDirectory();
@@ -118,10 +120,10 @@ export async function copy(sourcePath: string, targetPath: string, overwrite = f
   if (typeof overwrite !== "boolean") throw modelError("validation_failed", "overwrite precisa ser booleano.");
   const source = await root.entry(sourcePath);
   const staging = await prepareStaging(paths);
-  let created = true;
-  if (source instanceof Directory) await source.copy(targetPath, staging);
-  else created = (await source.copy(root.file(targetPath), staging, overwrite)).created;
-  return { entry: await (await root.entry(targetPath)).metadata(), created };
+  const result = source instanceof Directory
+    ? await source.copy(targetPath, staging)
+    : await source.copy(root.file(targetPath), staging, overwrite);
+  return { entry: await (await root.entry(targetPath)).metadata(), created: result.created };
 }
 
 /** Abre um ZIP da pasta, sem HTTP e sem salvá-lo como resultado permanente.

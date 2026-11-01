@@ -1,5 +1,42 @@
 # Testes
 
+## Estado atual do model
+
+A implementação do model requer testes antes de ser considerada validada.
+`npm run build:backend` passou, mantendo a saída em `dist`. As verificações
+diretas, executadas com `node --input-type=module` e código pela entrada padrão,
+confirmaram metadados e leitura básica de um arquivo temporário.
+
+A bateria parou ao usar `assert.rejects` para a exceção síncrona de
+`Directory.file(".")`. A operação recusou a raiz com `entry_conflict`, mas a
+asserção deveria usar `assert.throws`. O roteiro original ainda não foi corrigido
+nem retomado. ZIP, certificados e persistência de peers continuam sem testes de
+execução. Não foram criados arquivos de teste.
+
+Na revisão de 2026-11-01, `npm run build:backend` e verificações focadas com
+`node --input-type=module` passaram em Node.js 26.10.0. O código das verificações
+foi enviado pela entrada padrão, em execução sequencial com interrupção na
+primeira falha, usando somente uma pasta temporária exclusiva removida ao final.
+Foram conferidos:
+
+- Gravação de arquivo novo e sobrescrita, recusa de conflitos e links, limite de
+  bytes e preservação do destino. Alterações no destino durante a leitura da
+  fonte confirmaram que a existência é consultada novamente antes da publicação.
+- Cópia iterativa de árvore com 24 níveis, ramos e pasta vazia; retorno `created`
+  direto de `Directory.copy` e por `fileService.copy`; criação e substituição de
+  arquivo; recusa de destino ocupado, descendente e link, com staging limpo.
+- Movimentação para subpasta e raiz, renomeação com espaços e recusa de caminhos
+  inválidos antes de `path.posix.join`; aceitação de Unicode válido e recusa de
+  uma string com unidade substituta UTF-16 isolada.
+
+Esses resultados cobrem os ajustes da revisão, sem validar todo o model, todas
+as profundidades de árvore ou o funcionamento em Windows.
+
+O `npm test` atual é um placeholder que termina com erro. As seções abaixo que
+descrevem uma suíte de configuração, `.test-build`, `npm run check` e
+`npm run typecheck` não correspondem a verificações disponíveis nesta estrutura.
+Os cenários de cobertura futura continuam sendo referências para o QA.
+
 Os testes deverão conferir as opções de configuração, o comportamento da API,
 as operações de arquivos, o pareamento e a comunicação entre GUI e controller.
 A matriz de verificação deve incluir Linux Mint, Ubuntu e Windows, além das
