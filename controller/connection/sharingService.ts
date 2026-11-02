@@ -4,7 +4,7 @@ import { once } from "node:events";
 import type { Readable } from "node:stream";
 import { errorCode, modelError } from "../../model/file/File.js";
 
-// Notificações entre peers dependem do protocolo ainda indefinido em docs/connection.md.
+// Notificações de alterações nos arquivos continuam pendentes; mensagens de pareamento ficam em paringService.ts.
 const problems = {
   malformed_request: [400, "Requisição malformada", "A requisição não tem o formato esperado."],
   invalid_path: [400, "Caminho inválido", "O caminho tem um formato inválido."],
@@ -16,6 +16,18 @@ const problems = {
   payload_too_large: [413, "Limite de tamanho excedido", "A requisição ou o resultado excede o limite permitido."],
   unsupported_media_type: [415, "Tipo de mídia não suportado", "O tipo de conteúdo não é aceito nesta operação."],
   validation_failed: [422, "Validação da requisição falhou", "Confira os campos obrigatórios, seus tipos e valores."],
+  discovery_inactive: [409, "Descoberta encerrada", "A janela de descoberta não está aberta."],
+  discovery_target_forbidden: [403, "Destino proibido", "O destino está fora da rede selecionada."],
+  invalid_certificate: [422, "Certificado inválido", "O certificado não tem o formato ou a validade exigidos."],
+  pairing_peer_rejected: [403, "Participante recusado", "O certificado não pertence ao participante desta sessão."],
+  pairing_request_not_found: [404, "Pedido não encontrado", "A sessão de pareamento não foi encontrada."],
+  pairing_conflict: [409, "Conflito de pareamento", "A identidade ou a sessão já está associada a outro pedido."],
+  pairing_request_closed: [409, "Pedido encerrado", "A sessão não permite esta operação ou seu prazo terminou."],
+  pairing_in_progress: [409, "Operação em andamento", "Já existe uma operação nesta sessão."],
+  pairing_not_ready: [409, "Pareamento incompleto", "Faltam aceites ou confirmações de gravação para concluir."],
+  pairing_self: [422, "Própria identidade", "A instalação não pode parear consigo mesma."],
+  pairing_limit_reached: [429, "Limite de pedidos", "A janela atingiu o limite de pedidos de pareamento."],
+  peer_limit_reached: [409, "Limite de peers", "As 99 posições de peers estão ocupadas."],
   internal_error: [500, "Erro interno", "Não foi possível concluir a operação."],
 } as const;
 

@@ -94,7 +94,7 @@ do projeto descrita em [Configuração](configuration.md).
 flowchart LR
     VIEW[GUI / Vite] --> CONTROLLER[controller / Express]
     CONTROLLER --> MODEL[model]
-    MODEL --> PEER[P2P entre dispositivos]
+    CONTROLLER --> PEER[P2P entre dispositivos]
 ```
 
 O frontend e a API serão executados em `localhost`, em portas diferentes. O

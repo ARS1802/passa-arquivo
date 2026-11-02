@@ -1,6 +1,7 @@
 import { constants, type ReadStream } from "node:fs";
 import { link, open, rename, unlink } from "node:fs/promises";
 import path from "node:path";
+import { addAbortSignal } from "node:stream";
 import type { Directory } from "./Directory.js";
 
 /** Informações públicas de uma entrada, sempre relativas à raiz compartilhada. */
@@ -86,9 +87,11 @@ export class File {
    * @param staging Área privada no mesmo sistema de arquivos do destino.
    * @param overwrite Autoriza substituir somente arquivo regular.
    * @param maxBytes Limite conferido durante a leitura.
+   * @param signal Cancelamento cooperativo, conferido também antes da publicação atômica.
    * @returns Indica se não havia arquivo no destino antes da publicação.
    */
-  async write(content: FileContent, staging: Directory, overwrite = false, maxBytes = Number.MAX_SAFE_INTEGER): Promise<{ created: boolean }> {
+  async write(content: FileContent, staging: Directory, overwrite = false, maxBytes = Number.MAX_SAFE_INTEGER, signal?: AbortSignal): Promise<{ created: boolean }> {
+    signal?.throwIfAborted();
     if (typeof overwrite !== "boolean" || !Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
       throw modelError("validation_failed", "Informe sobrescrita e limite de bytes válidos.");
     }
@@ -115,11 +118,13 @@ export class File {
         let total = 0;
         const chunks = typeof content === "string" ? [Buffer.from(content)] : content instanceof Uint8Array ? [content] : content;
         for await (const chunk of chunks) {
+          signal?.throwIfAborted();
           if (!(chunk instanceof Uint8Array)) throw modelError("validation_failed", "O conteúdo precisa fornecer bytes.");
           total += chunk.byteLength;
           if (total > maxBytes) throw modelError("payload_too_large", "O conteúdo excede o limite permitido.");
           await handle.writeFile(chunk);
         }
+        signal?.throwIfAborted();
         await handle.sync();
       } finally { await handle.close(); }
       // Revalida o destino depois de consumir a fonte: ela pode ter levado tempo ou falhado.
@@ -128,6 +133,8 @@ export class File {
       const parent = await this.#directory.inspect(path.posix.dirname(this.path), "directory");
       const destination = path.join(parent.absolutePath, path.posix.basename(this.path));
       try {
+        // Depois de entregar a publicação ao sistema de arquivos, não há desfazer por desconexão.
+        signal?.throwIfAborted();
         if (overwrite) await rename(prepared, destination);
         else await link(prepared, destination);
         published = true;
@@ -158,8 +165,10 @@ export class File {
    * @param target Destino completo, cujo pai precisa existir.
    * @param staging Área privada de preparação.
    * @param overwrite Autoriza substituir arquivo regular.
+   * @param signal Cancela a leitura e impede publicar uma cópia ainda em preparação.
    */
-  async copy(target: File, staging: Directory, overwrite = false): Promise<{ created: boolean }> {
+  async copy(target: File, staging: Directory, overwrite = false, signal?: AbortSignal): Promise<{ created: boolean }> {
+    signal?.throwIfAborted();
     const source = await this.#directory.inspect(this.path, "file");
     try {
       const destination = await target.#directory.inspect(target.path, "file");
@@ -168,7 +177,8 @@ export class File {
       }
     } catch (error) { if (errorCode(error) !== "entry_not_found") throw error; }
     const stream = await this.read();
-    try { return await target.write(stream, staging, overwrite); }
+    if (signal) addAbortSignal(signal, stream);
+    try { return await target.write(stream, staging, overwrite, Number.MAX_SAFE_INTEGER, signal); }
     finally { stream.destroy(); }
   }
 

@@ -1,5 +1,5 @@
 import { type Stats } from "node:fs";
-import { lstat, mkdir, mkdtemp, readdir, realpath, rename, rmdir } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readdir, realpath, rename, rmdir } from "node:fs/promises";
 import { isUtf8 } from "node:buffer";
 import { Readable } from "node:stream";
 import { ZipFile } from "yazl";
@@ -104,14 +104,26 @@ export class Directory {
     return new Directory(root, stats);
   }
 
-  /** Prepara armazenamento privado no Linux; não modifica permissões de pastas existentes.
+  /** Prepara armazenamento privado no Linux.
    * No Windows, a definição e verificação das ACLs ainda são necessárias.
    * @param rootPath Caminho absoluto da área privada.
    * @param excludedPaths Áreas que não podem conter nem estar contidas neste armazenamento.
+   * @param repositoryDir Quando informado, permite apenas model/peer e tmp dentro do repositório,
+   * preparando esses dois diretórios com permissão 0700. Outros locais existentes mantêm suas permissões.
    */
-  static async openPrivate(rootPath: string, excludedPaths: readonly string[]): Promise<Directory> {
+  static async openPrivate(rootPath: string, excludedPaths: readonly string[], repositoryDir?: string): Promise<Directory> {
     if (process.platform === "win32") throw modelError("private_storage_unavailable", "A proteção por ACL ainda não foi definida para Windows.");
     const root = await configuredPath(rootPath);
+    let managed = false;
+    if (repositoryDir !== undefined) {
+      const repository = await configuredPath(repositoryDir);
+      const expectedState = path.join(repository, "model", "peer");
+      const expectedStaging = path.join(repository, "tmp");
+      managed = root === expectedState || root === expectedStaging;
+      if (!managed && (containsPath(root, repository) || containsPath(repository, root))) {
+        throw modelError("path_forbidden", "O armazenamento privado não pode ocupar esta área do repositório.");
+      }
+    }
     for (const value of excludedPaths) {
       const excluded = await configuredPath(value);
       if (containsPath(root, excluded) || containsPath(excluded, root)) {
@@ -119,7 +131,11 @@ export class Directory {
       }
     }
     await mkdir(root, { recursive: true, mode: 0o700 });
-    const stats = await lstat(root);
+    let stats = await lstat(root);
+    if (managed && stats.isDirectory() && !stats.isSymbolicLink() && (!process.getuid || stats.uid === process.getuid())) {
+      await chmod(root, 0o700);
+      stats = await lstat(root);
+    }
     if (!stats.isDirectory() || stats.isSymbolicLink() || await realpath(root) !== root
       || (stats.mode & 0o077) !== 0 || (process.getuid && stats.uid !== process.getuid())) {
       throw modelError("entry_forbidden", "O armazenamento privado precisa ser uma pasta acessível somente ao dono.");
@@ -147,6 +163,34 @@ export class Directory {
 
   /** Caminho relativo da pasta representada. */
   get path(): string { return this.#path; }
+
+  /** Lê nomes de filhos sem abrir seu conteúdo nem conferir permissões individuais.
+   * @internal O registro de peers filtra seus dados para não inspecionar arquivos de código.
+   * Para listar entradas compartilhadas, use list, que valida cada filho.
+   */
+  async childNames(): Promise<string[]> {
+    const { absolutePath } = await this.inspect(this.path, "directory");
+    const names = await readdir(absolutePath, { encoding: "buffer" });
+    return names.map(bytes => {
+      if (!isUtf8(bytes)) throw modelError("entry_forbidden", "Um nome não pode ser representado em UTF-8.");
+      return bytes.toString("utf8");
+    });
+  }
+
+  /** Remove somente um filho que seja uma pasta vazia, sem percorrer seu conteúdo.
+   * @internal Usado para liberar posições vazias que ainda não representam peers.
+   * @param name Nome simples da pasta filha, sem caminho pai.
+   */
+  async removeEmptyChild(name: string): Promise<void> {
+    validatePath(name);
+    if (name === "." || name.includes("/")) throw modelError("invalid_path", "Informe um único nome de pasta filha.");
+    const parent = await this.inspect(this.path, "directory");
+    const child = path.join(parent.absolutePath, name);
+    const stats = await lstat(child);
+    if (!stats.isDirectory() || stats.isSymbolicLink()) throw modelError("entry_forbidden", "A entrada não é uma pasta comum.");
+    if (stats.dev !== this.#rootStats.dev) throw modelError("cross_device_operation", "A pasta pertence a outro sistema de arquivos.");
+    await rmdir(child);
+  }
 
   /** Confere a raiz e cada componente sem seguir links internos.
    * @internal Usado pelos objetos File e Directory; não produz dados para a GUI.
@@ -207,12 +251,8 @@ export class Directory {
    * Um link ou entrada especial faz a listagem inteira falhar.
    */
   async list(): Promise<Array<File | Directory>> {
-    const { absolutePath } = await this.inspect(this.path, "directory");
-    const names = await readdir(absolutePath, { encoding: "buffer" });
     const entries: Array<File | Directory> = [];
-    for (const bytes of names) {
-      if (!isUtf8(bytes)) throw modelError("entry_forbidden", "Um nome não pode ser representado em UTF-8.");
-      const name = bytes.toString("utf8");
+    for (const name of await this.childNames()) {
       entries.push(await this.entry(this.path === "." ? name : `${this.path}/${name}`));
     }
     return entries.sort((a, b) => Number(b instanceof Directory) - Number(a instanceof Directory)
@@ -292,9 +332,11 @@ export class Directory {
   /** Copia a árvore inteira em staging antes de publicar; nunca mescla diretórios.
    * @param targetPath Destino final completo sob a mesma raiz.
    * @param staging Área privada no mesmo sistema de arquivos.
+   * @param signal Cancela a preparação e impede a publicação de uma árvore ainda incompleta.
    * @returns created igual a true após publicar a nova pasta; conflitos lançam erro.
    */
-  async copy(targetPath: string, staging: Directory): Promise<{ created: boolean }> {
+  async copy(targetPath: string, staging: Directory, signal?: AbortSignal): Promise<{ created: boolean }> {
+    signal?.throwIfAborted();
     validatePath(targetPath);
     if (this.path === ".") throw modelError("entry_forbidden", "A raiz não pode ser origem de cópia.");
     if (targetPath === this.path || targetPath.startsWith(`${this.path}/`)) {
@@ -314,13 +356,15 @@ export class Directory {
       ];
       // As subpastas encontradas entram na fila para as próximas iterações.
       for (let index = 0; index < directoriesToCopy.length; index++) {
+        signal?.throwIfAborted();
         const { source, destination } = directoriesToCopy[index]!;
         for (const entry of await source.list()) {
+          signal?.throwIfAborted();
           const target = `${destination}/${path.posix.basename(entry.path)}`;
           if (entry instanceof Directory) {
             await staging.create(target);
             directoriesToCopy.push({ source: entry, destination: target });
-          } else await entry.copy(staging.file(target), staging);
+          } else await entry.copy(staging.file(target), staging, false, signal);
         }
       }
       await this.inspect(this.path, "directory");
@@ -330,6 +374,7 @@ export class Directory {
       } catch (error) { if (errorCode(error) !== "entry_not_found") throw error; }
       const parent = await this.inspect(path.posix.dirname(targetPath), "directory");
       const source = await temporary.inspect(temporary.path, "directory");
+      signal?.throwIfAborted();
       try { await rename(source.absolutePath, path.join(parent.absolutePath, path.posix.basename(targetPath))); }
       catch (error) {
         if (errorCode(error) === "EXDEV") throw modelError("cross_device_operation", "Staging e destino precisam estar no mesmo sistema de arquivos.");

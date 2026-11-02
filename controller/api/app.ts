@@ -1,17 +1,20 @@
 import express, { type Express } from "express";
 import { constants, X509Certificate } from "node:crypto";
-import { lstat, realpath } from "node:fs/promises";
+import { access, mkdir, realpath } from "node:fs/promises";
 import { createServer, type Server } from "node:https";
 import { isIP, type Socket } from "node:net";
+import { homedir } from "node:os";
 import path from "node:path";
+import { loadEnvFile } from "node:process";
 import { TLSSocket } from "node:tls";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { Directory } from "../../model/file/Directory.js";
-import { modelError } from "../../model/file/File.js";
+import { errorCode, modelError } from "../../model/file/File.js";
 import * as files from "../../model/file/fileService.js";
 import * as peers from "../../model/peer/peerService.js";
 import { handleError } from "../connection/sharingService.js";
+import { setTrustUpdater } from "../connection/paringService.js";
 import { registerHealth } from "./routes/health.js";
 import { registerNavigation } from "./routes/navigate.js";
 import { registerDownloads } from "./routes/download.js";
@@ -22,11 +25,15 @@ export interface ApiLimits {
   jsonMaxBytes: number;
   zipMaxEntries: number;
   zipMaxBytes: number;
+  /** Limite de bytes do arquivo de upload; omitido, usa 1 GiB. */
+  uploadMaxBytes?: number;
 }
 
 const defaultLimits: Readonly<ApiLimits> = Object.freeze({
   jsonMaxBytes: 16_384, zipMaxEntries: 10_000, zipMaxBytes: 10_737_418_240,
 });
+// O backend compilado fica em dist/controller/api; os dados persistem na raiz do projeto.
+const repositoryDir = fileURLToPath(new URL("../../../", import.meta.url));
 // Cada socket exige autenticação antes da primeira requisição; não há confiança por IP.
 const connections = new WeakMap<TLSSocket, Promise<void>>();
 
@@ -67,14 +74,19 @@ function authenticateConnection(socket: TLSSocket): Promise<void> {
 
 /** Cria a aplicação sem abrir servidor nem preparar identidade ou pastas.
  * Toda rota, inclusive health, exige mTLS e confiança previamente persistida.
- * @param limits Limites já conferidos; omitidos, utiliza os padrões documentados.
+ * @param limits Limites das rotas; omitidos, utiliza os padrões documentados.
  */
 export function createApp(limits: Readonly<ApiLimits> = defaultLimits): Express {
-  if (Object.values(limits).some(value => !Number.isSafeInteger(value) || value <= 0)
+  const configured: ApiLimits = {
+    jsonMaxBytes: limits.jsonMaxBytes,
+    zipMaxEntries: limits.zipMaxEntries,
+    zipMaxBytes: limits.zipMaxBytes,
+  };
+  const uploadMaxBytes = limits.uploadMaxBytes === undefined ? 1_073_741_824 : limits.uploadMaxBytes;
+  if ([...Object.values(configured), uploadMaxBytes].some(value => !Number.isSafeInteger(value) || value <= 0)
     || Object.keys(defaultLimits).some(key => !Object.hasOwn(limits, key))) {
     throw modelError("configuration_invalid", "Informe limites inteiros positivos.");
   }
-  const configured = { ...limits };
   const app = express();
   app.disable("x-powered-by");
   app.disable("etag");
@@ -98,7 +110,7 @@ export function createApp(limits: Readonly<ApiLimits> = defaultLimits): Express 
   registerHealth(router);
   registerNavigation(router);
   registerDownloads(router, configured);
-  registerChanges(router, configured.jsonMaxBytes);
+  registerChanges(router, configured.jsonMaxBytes, uploadMaxBytes);
   app.use(router);
   app.use(handleError);
   return app;
@@ -106,12 +118,13 @@ export function createApp(limits: Readonly<ApiLimits> = defaultLimits): Express 
 
 /** Configuração das partes que já podem iniciar sem descoberta ou controle local. */
 interface BackendOptions extends ApiLimits {
-  root: string;
+  root: string | undefined;
   stateDir: string;
   stagingDir: string;
   host: string;
   port: number;
   shutdownTimeoutMs: number;
+  tlsMode: "self-signed" | "provided";
 }
 
 /** Lê somente opções documentadas, com prioridade de argumentos sobre ambiente.
@@ -163,15 +176,16 @@ function backendOptions(argv: string[], env: NodeJS.ProcessEnv): BackendOptions 
   };
   /** Confere um caminho absoluto nativo sem alterar espaços dos nomes.
    * @param name Nome público da opção.
+   * @param fallback Caminho padrão quando a opção for omitida.
    */
-  const absolute = (name: string): string => {
-    const text = value(name);
+  const absolute = (name: string, fallback?: string): string => {
+    const text = value(name, fallback);
     if (!path.isAbsolute(text) || text.includes("\0")) throw modelError("configuration_invalid", `--${name} exige um caminho absoluto válido.`);
     return path.normalize(text);
   };
-  const root = absolute("root");
-  const stateDir = absolute("state-dir");
-  const stagingDir = absolute("staging-dir");
+  const root = parsed.values.root === undefined && env.PASSA_ROOT === undefined ? undefined : absolute("root");
+  const stateDir = absolute("state-dir", path.join(repositoryDir, "model", "peer"));
+  const stagingDir = absolute("staging-dir", path.join(repositoryDir, "tmp"));
   const host = value("host", "127.0.0.1");
   if (!isIP(host) || host.includes("%")) throw modelError("configuration_invalid", "--host exige um IP válido sem identificador de zona.");
   const mode = value("tls-mode", "self-signed");
@@ -188,43 +202,79 @@ function backendOptions(argv: string[], env: NodeJS.ProcessEnv): BackendOptions 
       throw modelError("configuration_invalid", `--${name} ainda não tem integração definida com o transporte P2P.`);
     }
   }
-  // O limite de upload é reconhecido, mas a rota multipart continua indisponível.
-  integer("upload-max-bytes", 1_073_741_824);
   return {
-    root, stateDir, stagingDir, host, port: integer("port", 8443, 65535),
+    root, stateDir, stagingDir, host, tlsMode: mode, port: integer("port", 8443, 65535),
     jsonMaxBytes: integer("json-max-bytes", defaultLimits.jsonMaxBytes),
+    uploadMaxBytes: integer("upload-max-bytes", 1_073_741_824),
     zipMaxEntries: integer("zip-max-entries", defaultLimits.zipMaxEntries),
     zipMaxBytes: integer("zip-max-bytes", defaultLimits.zipMaxBytes),
     shutdownTimeoutMs: integer("shutdown-timeout-ms", 10_000, 2_147_483_647),
   };
 }
 
-/** Inicia HTTPS usando somente identidade e registros já existentes.
- * Não gera certificados, não cria confiança e não abre controle de pareamento.
+/** Prepara a raiz padrão no diretório do usuário ou mantém a configuração explícita.
+ * Quando omitida, cria passa-arquivo, passa-arquivo(2), passa-arquivo(3), etc.,
+ * reservando o primeiro nome livre sem alterar entradas existentes.
+ * @param configuredRoot Caminho absoluto já validado, escolhido por --root ou PASSA_ROOT.
+ * @returns Caminho da raiz; uma configuração explícita continua exigindo pasta existente.
+ */
+export async function prepareSharedRoot(configuredRoot?: string): Promise<string> {
+  if (configuredRoot !== undefined) return configuredRoot;
+  const base = path.join(homedir(), "passa-arquivo");
+  for (let number = 1; ; number++) {
+    const candidate = number === 1 ? base : `${base}(${number})`;
+    try {
+      await mkdir(candidate, { mode: 0o700 });
+      return candidate;
+    } catch (error) {
+      if (errorCode(error) !== "EEXIST") throw error;
+    }
+  }
+}
+
+/** Inicia HTTPS, preparando o estado pelo model na primeira execução.
+ * O estado padrão fica em model/peer e o staging em tmp; ambos persistem entre reinícios.
+ * Não cria confiança em peers nem abre controle de pareamento.
  * @returns Servidor aberto, que também pode ser encerrado pelo chamador local.
  */
 export async function startBackend(): Promise<Server> {
+  try { loadEnvFile(path.join(repositoryDir, ".env")); }
+  catch (error) {
+    if (errorCode(error) !== "ENOENT") throw modelError("configuration_invalid", "Não foi possível ler o arquivo .env do projeto.");
+  }
   const options = backendOptions(process.argv.slice(2), process.env);
-  // O comando existente executa dist/controller/api/app.js; três níveis levam à raiz.
-  const repositoryDir = fileURLToPath(new URL("../../../", import.meta.url));
-  await lstat(options.stateDir);
-  const directory = await Directory.openPrivate(options.stateDir, [options.root, options.stagingDir, repositoryDir]);
-  // Impede initialize de tratar a falta de identidade/índice como primeira execução.
-  await directory.inspect("tls/server.crt", "file");
-  await directory.inspect("tls/server.key", "file");
-  await directory.inspect("peers/index.csv", "file");
-  await peers.initialize({ stateDir: options.stateDir, rootDir: options.root, stagingDir: options.stagingDir, repositoryDir });
+  // provided exige identidade existente; initialize só pode preparar a primeira identidade em self-signed.
+  // A validade, a correspondência da chave e as permissões continuam sendo conferidas pelo model.
+  if (options.tlsMode === "provided") {
+    try {
+      await Promise.all(["server.crt", "server.key"].map(name => access(path.join(options.stateDir, "tls", name))));
+    } catch {
+      throw modelError("configuration_invalid", "O modo provided exige certificado e chave TLS já existentes.");
+    }
+  }
+  const root = await prepareSharedRoot(options.root);
+  await Directory.openPrivate(options.stagingDir, [root, options.stateDir], repositoryDir);
+  await peers.initialize({ stateDir: options.stateDir, rootDir: root, stagingDir: options.stagingDir, repositoryDir });
   const identity = await peers.localIdentity();
   const known = await peers.listPeers();
-  await files.setSharedDirectory(options.root, { stateDir: options.stateDir, stagingDir: options.stagingDir, repositoryDir });
-  // Confere a existência da raiz sem criar uma pasta para corrigir configuração ausente.
-  await realpath(options.root);
+  await files.setSharedDirectory(root, { stateDir: options.stateDir, stagingDir: options.stagingDir, repositoryDir });
+  // A raiz explícita precisa existir; a raiz padrão já foi criada com nome disponível.
+  await realpath(root);
   const server = createServer({
     cert: identity.certificatePem, key: identity.privateKeyPem,
     ca: known.map(peer => peer.certificatePem),
     requestCert: true, rejectUnauthorized: true,
     minVersion: "TLSv1.3", maxVersion: "TLSv1.3", secureOptions: constants.SSL_OP_NO_TICKET,
   }, createApp(options));
+  /** Recarrega os certificados confiáveis para novos handshakes, mantendo TLS e mTLS exigidos. */
+  const refreshTrust = async (): Promise<void> => {
+    const trusted = await peers.listPeers();
+    server.setSecureContext({
+      cert: identity.certificatePem, key: identity.privateKeyPem,
+      ca: trusted.map(peer => peer.certificatePem),
+      minVersion: "TLSv1.3", maxVersion: "TLSv1.3", secureOptions: constants.SSL_OP_NO_TICKET,
+    });
+  };
   server.on("resumeSession", (_id, callback) => callback(null));
   server.on("newSession", (_id, _data, callback) => callback());
   server.on("secureConnection", socket => {
@@ -236,6 +286,7 @@ export async function startBackend(): Promise<Server> {
     server.once("error", reject);
     server.listen(options.port, options.host, () => { server.off("error", reject); resolve(); });
   });
+  setTrustUpdater(refreshTrust);
   let closing = false;
   let shutdownTimer: ReturnType<typeof setTimeout> | undefined;
   /** Aguarda operações abertas até o prazo documentado e depois fecha seus sockets. */
@@ -255,6 +306,7 @@ export async function startBackend(): Promise<Server> {
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
   server.once("close", () => {
+    setTrustUpdater(undefined);
     if (shutdownTimer) clearTimeout(shutdownTimer);
     process.off("SIGINT", shutdown); process.off("SIGTERM", shutdown);
   });

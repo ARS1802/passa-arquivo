@@ -68,19 +68,21 @@ export async function remove(path: string): Promise<void> {
  * @param paths Configuração capturada no início da operação.
  */
 async function prepareStaging(paths: DirectoryBoundaries & { rootPath: string }): Promise<Directory> {
-  return Directory.openPrivate(paths.stagingDir, [paths.rootPath, paths.stateDir, paths.repositoryDir]);
+  return Directory.openPrivate(paths.stagingDir, [paths.rootPath, paths.stateDir], paths.repositoryDir);
 }
 
 /** Grava conteúdo local/recebido por partes, substituindo somente arquivos regulares.
  * @param targetPath Caminho final relativo, com pai existente.
  * @param content Bytes fornecidos pelo controller após a validação do transporte.
  * @param maxBytes Limite de bytes, aplicado durante a leitura.
+ * @param signal Cancelamento solicitado pelo chamador antes da publicação.
  */
-export async function write(targetPath: string, content: FileContent, maxBytes = 1_073_741_824): Promise<{ entry: EntryMetadata; created: boolean }> {
+export async function write(targetPath: string, content: FileContent, maxBytes = 1_073_741_824, signal?: AbortSignal): Promise<{ entry: EntryMetadata; created: boolean }> {
+  signal?.throwIfAborted();
   const root = selectedDirectory();
   const paths = selectedPaths!;
   const file = root.file(targetPath);
-  const result = await file.write(content, await prepareStaging(paths), true, maxBytes);
+  const result = await file.write(content, await prepareStaging(paths), true, maxBytes, signal);
   return { entry: await file.metadata(), created: result.created };
 }
 
@@ -112,17 +114,19 @@ export async function move(sourcePath: string, changes: { name?: string; parentP
  * @param sourcePath Origem relativa à raiz.
  * @param targetPath Destino final completo relativo à raiz.
  * @param overwrite Autoriza somente substituir arquivo regular por arquivo regular.
+ * @param signal Cancelamento solicitado pelo chamador antes da publicação.
  * @returns Metadados e indicação de criação fornecida pela operação de cópia; falhas são propagadas.
  */
-export async function copy(sourcePath: string, targetPath: string, overwrite = false): Promise<{ entry: EntryMetadata; created: boolean }> {
+export async function copy(sourcePath: string, targetPath: string, overwrite = false, signal?: AbortSignal): Promise<{ entry: EntryMetadata; created: boolean }> {
+  signal?.throwIfAborted();
   const root = selectedDirectory();
   const paths = selectedPaths!;
   if (typeof overwrite !== "boolean") throw modelError("validation_failed", "overwrite precisa ser booleano.");
   const source = await root.entry(sourcePath);
   const staging = await prepareStaging(paths);
   const result = source instanceof Directory
-    ? await source.copy(targetPath, staging)
-    : await source.copy(root.file(targetPath), staging, overwrite);
+    ? await source.copy(targetPath, staging, signal)
+    : await source.copy(root.file(targetPath), staging, overwrite, signal);
   return { entry: await (await root.entry(targetPath)).metadata(), created: result.created };
 }
 

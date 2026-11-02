@@ -274,7 +274,7 @@ comparação usa `stateDir/tokens.json`; esse arquivo não é criado pela valida
 
 | Item | Uso no projeto |
 | --- | --- |
-| Express | Usado em `controller/api/app.ts`, que atualmente abre a porta 3030 e registra uma rota inicial. |
+| Express | Organiza as rotas da API de arquivos (HTTPS, porta padrão 8443) e da entrada temporária de descoberta e pareamento (8444). |
 | Node.js | Executa o backend e fornece os módulos nativos usados pelo model, descritos abaixo. |
 | TypeScript e pacotes de tipos | Conferem tipos e compilam o código. Essa conferência não substitui a validação dos dados em execução. |
 | `tsconfig.json` | Compila `model` e `controller` para `dist` na raiz, com `npm run build:backend`. |
@@ -296,8 +296,9 @@ descrevem o código do model, sem afirmar que o fluxo completo da interface func
 | Biblioteca ou módulo | Onde e como é utilizado |
 | --- | --- |
 | `node-forge` | Em `model/peer/peerService.ts`, `generateIdentity` gera o par RSA de 2048 bits, monta um certificado X.509 autoassinado, assina com SHA-256 e converte certificado e chave para PEM. |
-| `node:crypto` | No mesmo arquivo, `randomBytes` produz a parte aleatória do número de série e `randomUUID` compõe o nome único da instalação. `X509Certificate` interpreta certificados, fornece a impressão SHA-256 usada para comparar identidades e permite verificar assinatura e validade. `createPrivateKey` permite conferir se a chave privada corresponde ao certificado local. |
-| `node:net` | `validatePeerData`, em `peerService.ts`, usa somente `isIP` para conferir o formato do endereço informado. Não abre sockets, descobre dispositivos ou autentica peers. |
+| `node:crypto` | No model, gera aleatoriedade para a identidade, interpreta certificados e confere a correspondência da chave privada. No controller, `randomUUID` identifica sessões, `X509Certificate.fingerprint256` fornece a impressão digital completa e o certificado DER permite comparar a identidade exata. As chaves privadas são usadas pelo TLS nativo e não entram em respostas. |
+| `node:net` | No model, `isIP` confere o formato do endereço. Na descoberta, `BlockList` confere sub-redes IPv4/IPv6 obtidas das interfaces reais do sistema. Um IP é localização, não prova de identidade. |
+| `node:https` e `node:tls` | Servem os dois contextos HTTPS e trocam mensagens de pareamento. O transporte confere o certificado esperado; o backend recarrega certificados confiáveis com `setSecureContext`, preservando TLS 1.3 e mTLS. |
 | `node:stream` | `Directory.archive`, em `model/file/Directory.ts`, usa `Readable.from` para fornecer os bytes de cada arquivo ao ZIP por partes. Durante a leitura, conta os bytes não comprimidos e interrompe ao exceder o limite. O fechamento da saída destrói os streams ativos. |
 | `yazl` | `Directory.archive` usa `ZipFile`, `addReadStreamLazy`, `addEmptyDirectory` e `end` para produzir um ZIP em stream, com nomes relativos e pastas vazias. Os arquivos são lidos pelos objetos `File`; o ZIP não é salvo como resultado permanente. |
 
@@ -316,10 +317,10 @@ por 365 dias, permite uso como cliente e servidor TLS e tem um nome único que
 não depende do IP. Reinícios reutilizam esses arquivos. Identidade incompleta,
 expirada ou incompatível causa erro, sem regeneração automática.
 
-Cada peer ocupa uma pasta de `01` a `99` em `<stateDir>/peers`, contendo
+Cada peer ocupa uma pasta de `01` a `99` diretamente em `<stateDir>`, contendo
 `certificado.cert`. O arquivo `index.csv` relaciona `directory`, `displayName`,
-`ipAddress`, `firstConnectedAt` e `lastConnectedAt`. Por exemplo, `directory`
-igual a `01` aponta para `<stateDir>/peers/01`. O menor número livre pode ser
+`ipAddress`, `firstConnectedAt`, `lastConnectedAt`, `pairingId` e `status`. Por exemplo, `directory`
+igual a `01` aponta para `<stateDir>/01`. O menor número livre pode ser
 reutilizado após exclusão; com 99 registros, um novo peer é recusado.
 
 O certificado identifica o peer; apelido e IP podem mudar. `savePeer` pressupõe
@@ -329,8 +330,15 @@ não substitui a prova de posse da chave nem implementa comunicação de rede.
 `localIdentity` fornece certificado e chave somente para uso pelo transporte
 local; a chave não deve ser enviada à GUI ou a outro peer.
 
+`preparePeer`, `confirmPeer` e `discardPreparedPeer` mantêm preparações separadas
+da confiança. `listPeers` e `findPeer` devolvem somente registros confiáveis.
+O CSV antigo é aceito e os peers já confiáveis são preservados. O fluxo de
+`paringService.ts` e suas funções locais estão em [Conexão](connection.md).
+
 `File` e `Directory` realizam a persistência. Os dados privados ficam fora da
-raiz compartilhada e do repositório. A implementação atual verifica permissões
+raiz compartilhada. Os padrões são `model/peer` para estado e `tmp` para staging;
+somente essas duas áreas específicas são permitidas dentro do repositório e seus
+dados de execução são ignorados pelo Git. A implementação atual verifica permissões
 POSIX; a abertura do armazenamento privado no Windows é recusada enquanto a
 proteção por ACL não estiver definida.
 

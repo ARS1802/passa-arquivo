@@ -1,9 +1,10 @@
 # Rotas da API
 
-A API ainda não recebe requisições. Este guia explica como cada rota deverá
-funcionar: o que enviar, qual resposta esperar e quais erros podem acontecer.
-Os nomes dos códigos de erro e alguns detalhes de validação e de resposta ainda
-podem mudar durante o desenvolvimento.
+A API recebe requisições HTTPS com as verificações de identidade descritas neste
+guia. A descoberta e o pareamento têm rotas temporárias próprias. As operações
+de arquivos abaixo descrevem o contrato do sistema; upload multipart e cópia HTTP
+ainda têm pendências de implementação. Consulte [Testes](testing.md) para distinguir
+os fluxos verificados dos cenários previstos.
 
 Uma rota, também chamada de endpoint, combina um método HTTP com um endereço.
 Por exemplo, `GET /api/v2/files` servirá para baixar um arquivo e
@@ -186,15 +187,40 @@ navegar, baixar ou enviar.
 
 ## Descoberta e pareamento: `/connect`
 
-O nome é provisório. A descoberta é ativada pelos usuários de ambos os
-computadores e encerrada ao fim da busca. `/connect` não faz parte das dez
+Na porta temporária 8444, **GET /connect** consulta o anúncio do dispositivo.
+A descoberta é ativada localmente pelos usuários de ambos os
+computadores e encerrada manualmente ou após 120 segundos. `/connect` não faz parte das dez
 operações de arquivos abaixo: seu papel é encontrar candidatos e iniciar o
 pareamento, sem liberar acesso a arquivos.
 
 O [guia de conexão](connection.md) descreve os parâmetros de IP/rede, o pedido
-com certificado, o código entregue fora do canal e a persistência bilateral.
-A recomendação de método é `POST` para iniciar ações, mas divisão das rotas,
-esquemas e respostas ainda precisam ser fechados. Não há endpoint executável.
+com certificado, a conferência das impressões digitais completas fora do canal
+e a persistência com estados pendentes e confiáveis.
+GET não aceita query nem corpo e retorna `200 application/json` com somente
+`displayName` e `certificatePem`. Query desconhecida retorna `422 validation_failed`;
+corpo com bytes retorna `400 malformed_request`. A consulta exige TLS 1.3 com
+certificado de cliente, mesmo ainda desconhecido; não concede acesso a arquivos.
+O contexto temporário e suas verificações estão em [Segurança](security.md).
+
+Não existe endpoint remoto para abrir a descoberta ou iniciar uma varredura.
+O aceite humano também é uma chamada local do controller, sem rota remota.
+
+| Método e caminho na porta 8444 | Corpo JSON | Resultado |
+| --- | --- | --- |
+| `POST /connect/requests` | `{ id, displayName, ttlMs }` | `201` com estado da sessão e `Location`. |
+| `GET /connect/requests/:id` | Sem corpo | `200` com estado da própria sessão. |
+| `POST /connect/requests/:id/preparation` | `{}` | `200` após preparar o registro sem confiança; exige aceite local. |
+| `POST /connect/requests/:id/confirmation` | `{}` | `200` após confirmar e recarregar TLS; exige preparação e aceite. |
+| `DELETE /connect/requests/:id` | `{ reason: "rejected" ou "cancelled" }` | `200` após encerrar e descartar a preparação, sem remover confiança já concluída. |
+
+Todas essas respostas de sessão têm exatamente `{ id, status, accepted }`.
+`id` é UUID v4, `displayName` é texto não vazio e `ttlMs` é inteiro de 1 a 120000.
+Não são aceitos query ou campos extras; o JSON UTF-8 é limitado a 16 KiB.
+O certificado do remetente precisa ser o registrado na sessão e vem do TLS,
+não do corpo. Outro certificado recebe `403 pairing_peer_rejected`. Sessão
+ausente recebe `404`, falta de aceite ou conflito recebe `409`, limite de pedidos
+recebe `429`, e falha de gravação recebe `500`, sem detalhes internos.
+Os contratos e as condições completas estão no [guia de conexão](connection.md#contrato-http-na-porta-temporária).
 
 ## E01 — Verificar se o servidor responde
 

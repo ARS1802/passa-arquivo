@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# Dados privados e temporários da instalação local
+/model/peer/tls/
+/model/peer/index.csv
+/model/peer/[0-9][0-9]/
+/model/peer/.operation-*/
+/tmp/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

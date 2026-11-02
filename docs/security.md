@@ -2,7 +2,9 @@
 
 O passa-arquivo usará certificados para reconhecer os dispositivos. A primeira
 conexão será confirmada pelas pessoas; as seguintes usarão a confiança salva.
-Esse funcionamento ainda não está implementado.
+A identidade local, a descoberta e o fluxo de pareamento usam os certificados
+persistentes. A confirmação humana compara as impressões digitais completas,
+conforme o [fluxo de conexão](connection.md).
 
 ## Identidade criada na instalação
 
@@ -14,8 +16,11 @@ fica somente naquela máquina, em armazenamento protegido.
 O material deve ser criado localmente para cada instalação, nunca distribuído
 como um par de chaves igual para todos. Reiniciar o programa, atualizar a
 aplicação ou mudar de IP não deve gerar outra identidade automaticamente.
-Algoritmo, tamanho de chave, validade e perfil do certificado ainda precisam ser
-escolhidos. A geração faz parte da preparação local da instalação, não de cada requisição.
+A implementação local usa RSA de 2048 bits, assinatura SHA-256 e validade de
+365 dias, com uso de cliente e servidor TLS. O nome é único por instalação e
+não depende do IP. O model prepara a identidade na primeira execução e não a
+regenera automaticamente em caso de perda ou expiração. A geração faz parte da
+preparação local da instalação, não de cada requisição.
 
 ## TOFU com confirmação humana
 
@@ -30,28 +35,32 @@ feita por uma assinatura no handshake, conforme a
 [RFC 8446](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.4.3).
 
 Por isso, o primeiro contato precisa ficar restrito ao pareamento. Ele não pode
-listar, ler ou alterar arquivos. Só depois do aceite e da confirmação do código
+listar, ler ou alterar arquivos. Só depois do aceite e da conferência dos certificados
 os certificados serão salvos como identidades confiáveis.
 
-## Código de verificação
+## Conferência das impressões digitais
 
-A gera um código curto para aquela tentativa. O usuário A o entrega ao usuário B
-fora do canal que está sendo verificado, e o usuário B o informa em sua interface
-local. Ambos ativam a descoberta e precisam estar de acordo com o pareamento.
+O usuário de A comunica a impressão digital SHA-256 completa do certificado de A
+por um canal confiável fora da conexão em verificação. O usuário de B confere
+esse valor com o certificado recebido na sessão; os usuários repetem o processo
+no sentido inverso. São 64 caracteres hexadecimais, com dois-pontos opcionais
+como separadores. Não basta comparar poucos caracteres nem usar o próprio
+anúncio de rede como fonte independente da comparação.
 
-O código precisa ter uso único, prazo de validade, limite de tentativas e estar
-ligado aos dois certificados e à sessão. Não pode aparecer em URL, log, anúncio
-de descoberta nem em uma resposta que qualquer candidato consiga consultar.
+Esse procedimento substitui o código curto. O Node fornece o valor por
+[`X509Certificate.fingerprint256`](https://nodejs.org/api/crypto.html#x509fingerprint256).
+Não há biblioteca PAKE, algoritmo criptográfico próprio ou código secreto enviado
+pela rede. A comunicação continua usando TLS e as verificações nativas dos certificados.
 
-Enviar o código como texto para o desconhecido e depois pedir que ele o repita
-não impede personificação. Um intermediário poderia receber e retransmitir esse
-mesmo valor. Também não basta inventar um hash de poucos dígitos dos certificados
-sem analisar como o protocolo impede substituições e tentativas de adivinhação.
+O aceite fica ligado ao identificador da sessão e aos dois certificados. A
+janela dura até 120 segundos, e três comparações incorretas recusam o pedido.
+`acceptPairingRequest` só é chamado localmente; nenhuma rota remota pode registrar
+esse aceite em nome da pessoa. Um pedido ou uma confirmação de gravação recebidos
+antes do aceite local não liberam confiança.
 
-A integração escolhida terá de vincular a confirmação aos certificados
-apresentados e à sessão de transporte, recusando troca de certificado, repetição
-de mensagens e confirmação em outra sessão. O fluxo de telas, isoladamente,
-não demonstra proteção criptográfica contra um intermediário.
+Preparar o registro em disco não autoriza arquivos. O serviço coordena as duas
+preparações antes de pedir a confirmação. Falhas são propagadas e podem exigir
+repetição da mesma sessão, como descrito em [Conexão](connection.md#recusa-expiração-e-repetição).
 
 ## mTLS no primeiro contato e depois dele
 
@@ -70,8 +79,10 @@ Uma configuração que rejeita todo certificado desconhecido no handshake não
 consegue receber o primeiro pedido HTTP de pareamento. O contexto temporário
 precisará permitir a apresentação de certificados ainda não confiáveis, conferir
 posse de chave e formato, e mantê-los sem acesso à API de arquivos até concluir
-as confirmações. A política exata e a separação de portas/contextos TLS precisam
-ser definidas antes da implementação.
+as confirmações. A entrada temporária de descoberta foi definida na porta
+**8444**, com TLS 1.3, e permanece aberta por até 120 segundos após uma chamada
+local do controller. Ela recebe certificados ainda desconhecidos para consultar anúncios e trocar
+mensagens da própria sessão. Essas mensagens não substituem o aceite humano.
 
 Escolher uma rota Express diferente não muda uma decisão TLS já tomada antes
 que a requisição HTTP chegue. Também não basta enviar um PEM no corpo: o
@@ -84,6 +95,17 @@ no serviço de arquivos nem desativar globalmente a verificação TLS para torna
 pareamento possível. Esses controles estão na
 [documentação de TLS do Node.js](https://nodejs.org/api/tls.html#tlscreateserveroptions-secureconnectionlistener).
 
+Na descoberta, `rejectUnauthorized: false` é usado somente na entrada temporária
+e nas consultas a candidatos. Isso permite apresentar um certificado ainda não
+cadastrado; não o torna confiável. O handshake exige certificado de cliente e
+prova de posse da chave, e o controller confere validade e assinatura do
+certificado autoassinado. O anúncio devolve apenas nome e certificado público.
+O cliente das mensagens de pareamento usa `rejectUnauthorized: true`, com o
+certificado esperado como confiança TLS e pinning do certificado exato. Não usa
+o IP como identidade. O listener de arquivos mantém `rejectUnauthorized: true`
+e sua lista de certificados confiáveis, recarregada após a conclusão do pareamento.
+Nenhuma chave privada aparece no anúncio ou nas respostas de sessões.
+
 ## Confiança nos dois sentidos
 
 Depois da confirmação, B salva o certificado de A e A salva o de B. Em cada nova
@@ -95,12 +117,13 @@ O nome é apenas uma identificação visual. O IP serve para encontrar a máquin
 Nenhum dos dois pode substituir a conferência do certificado. Descobrir outro
 certificado no mesmo endereço não autoriza atualizar o registro automaticamente.
 
-O perfil de identidade TLS precisa tratar essa independência do IP. A validação
-comum de HTTP confere nomes/IPs do certificado; ela não se transforma em
-verificação de identidade persistente só porque um certificado foi salvo. O
-cliente P2P precisará de uma política explícita de identidade e pinning, mantendo
-verificações criptográficas e de validade. O perfil e os nomes usados ainda
-estão em definição. A API de validação de identidade está documentada pelo
+O perfil de identidade TLS descrito acima não usa o IP como identidade. A
+validação comum de HTTP confere nomes/IPs do certificado; ela não se transforma
+em verificação de identidade persistente só porque um certificado foi salvo.
+O cliente P2P de arquivos ainda precisará de uma política explícita de identidade
+e pinning, isto é, conferir o certificado exato que foi salvo, mantendo as
+verificações criptográficas e de validade. Esse cliente continua pendente.
+A API de validação de identidade está documentada pelo
 [Node.js](https://nodejs.org/api/tls.html#tlscheckserveridentityhostname-cert).
 
 ## Troca de certificado e perda de chave

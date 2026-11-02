@@ -1,5 +1,29 @@
 # Configuração
 
+## Arquivo .env do backend
+
+`npm run start:backend` carrega o `.env` da raiz do projeto antes de validar a
+configuração e iniciar HTTPS. O carregamento acontece em `startBackend`, em
+`controller/api/app.ts`, usando
+[`loadEnvFile` do Node.js](https://nodejs.org/api/process.html#processloadenvfilepath),
+sem dependência adicional. Importar o módulo ou chamar `createApp` não carrega o arquivo.
+
+O `.env` contém endereço, porta, modo TLS, limites de upload/JSON/ZIP e prazo de
+encerramento. `PASSA_HOST=127.0.0.1` atende somente à própria máquina; use
+`0.0.0.0` para receber conexões IPv4 nas interfaces de rede, mantendo mTLS exigido.
+Depois de editar o arquivo, reinicie o backend.
+
+Os caminhos opcionais estão comentados para preservar os padrões: raiz em
+`<diretório do usuário>/passa-arquivo`, com sufixo numérico se o nome estiver
+ocupado, estado em `model/peer` e staging em `tmp`. Para substituir esses caminhos,
+informe valores absolutos. Não há expansão de `$HOME` ou `~` dentro do `.env`.
+Chaves privadas continuam em arquivos próprios; o `.env` contém apenas opções.
+
+Se o arquivo não existir, continuam disponíveis o ambiente externo e os padrões
+do código. Uma falha de leitura diferente de arquivo ausente impede a inicialização.
+As descrições de configuração por `check:config` abaixo são referências do
+desenho anterior; esse script não está disponível no manifesto atual.
+
 Você já pode conferir as opções do projeto pelo terminal. O comando verifica os
 valores informados e se eles combinam entre si; ele não inicia um servidor, não
 cria pastas e não lê certificados ou tokens. A API ainda não recebe requisições.
@@ -89,8 +113,9 @@ Você pode usar argumentos no terminal ou variáveis de ambiente. Para cada opç
 a escolha segue esta ordem:
 
 1. Valor passado como argumento, por exemplo `--port 9443`.
-2. Variável de ambiente correspondente, como `PASSA_PORT`.
-3. Valor padrão, quando a opção tem um.
+2. Variável já definida no ambiente do processo, como `PASSA_PORT`.
+3. Valor no `.env` da raiz, quando não houver essa variável no ambiente externo.
+4. Valor padrão, quando a opção tem um.
 
 Por exemplo, se `PASSA_PORT` vale `8444` e você informa `--port 9443`, a porta
 escolhida é `9443`. Um argumento substitui o valor da variável antes da validação,
@@ -105,8 +130,9 @@ que os argumentos seguintes devem chegar ao programa. O programa não aceita out
 
 As variáveis do projeto começam com `PASSA_`. Um nome desconhecido com esse prefixo
 causa erro, inclusive quando há argumentos no terminal. Variáveis de outros
-programas são ignoradas. Não há leitura automática de `.env` nem arquivo geral de
-configuração. Arquivos de tokens e certificados têm finalidades próprias.
+programas são ignoradas pela validação do backend. O `.env` é carregado na
+inicialização; os valores dele passam pela mesma validação. Arquivos de
+certificados têm finalidades próprias e não são substituídos pelo `.env`.
 
 Use somente dígitos para números: `1000` é válido; `1e3`, `1.0`, `+1000`, `10MB`
 e números com espaços não são. Zeros à esquerda são aceitos. Listas precisam ser

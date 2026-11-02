@@ -22,7 +22,15 @@ export interface PeerStorageOptions {
   repositoryDir: string;
 }
 
-const columns = ["directory", "displayName", "ipAddress", "firstConnectedAt", "lastConnectedAt"] as const;
+/** Estado privado do registro; consultas normais não expõem peers pendentes. */
+interface StoredPeer extends Peer {
+  pairingId: string;
+  status: "pending" | "trusted";
+}
+
+const legacyColumns = ["directory", "displayName", "ipAddress", "firstConnectedAt", "lastConnectedAt"] as const;
+const columns = [...legacyColumns, "pairingId", "status"] as const;
+const peerDirectoryPattern = /^(0[1-9]|[1-9][0-9])$/;
 // Armazenamento e fila pertencem à única instância do processo. Não sincronizam outros processos.
 let storage: Directory | undefined;
 let pending: Promise<void> = Promise.resolve();
@@ -87,7 +95,7 @@ function validatePeerData(displayName: string, ipAddress: string): void {
 /** Codifica o índice CSV com cabeçalho fixo, aspas escapadas e finais de linha CRLF.
  * @param peers Registros que serão persistidos.
  */
-function encodeIndex(peers: readonly Peer[]): string {
+function encodeIndex(peers: readonly StoredPeer[]): string {
   return [columns, ...peers.map(peer => columns.map(column => peer[column]))]
     .map(row => row.map(value => `"${value.replaceAll('"', '""')}"`).join(",")).join("\r\n") + "\r\n";
 }
@@ -128,39 +136,44 @@ function parseIndex(source: string): string[][] {
 /** Lê e confere o índice, os certificados e a correspondência entre linhas e pastas.
  * @param directory Raiz privada do estado local.
  */
-async function loadPeers(directory: Directory): Promise<Peer[]> {
-  const rows = parseIndex(await readText(directory.file("peers/index.csv")));
-  if (rows[0]?.join(",") !== columns.join(",") || rows.length > 100) {
+async function loadPeers(directory: Directory): Promise<StoredPeer[]> {
+  const rows = parseIndex(await readText(directory.file("index.csv")));
+  const legacy = rows[0]?.join(",") === legacyColumns.join(",");
+  if ((!legacy && rows[0]?.join(",") !== columns.join(",")) || rows.length > 100) {
     throw modelError("peer_store_invalid", "O índice de peers tem cabeçalho ou quantidade de registros inválidos.");
   }
-  const peers: Peer[] = [];
+  const peers: StoredPeer[] = [];
   const ids = new Set<string>();
   const identities = new Set<string>();
   for (const row of rows.slice(1)) {
-    if (row.length !== columns.length) throw modelError("peer_store_invalid", "Uma linha do índice tem campos incompatíveis.");
+    if (row.length !== (legacy ? legacyColumns.length : columns.length)) throw modelError("peer_store_invalid", "Uma linha do índice tem campos incompatíveis.");
     const [id, displayName, ipAddress, firstConnectedAt, lastConnectedAt] = row as [string, string, string, string, string];
-    if (!/^(0[1-9]|[1-9][0-9])$/.test(id) || ids.has(id)) throw modelError("peer_store_invalid", "O índice contém uma pasta inválida ou repetida.");
+    const pairingId = legacy ? "" : row[5]!;
+    const status = legacy ? "trusted" : row[6]!;
+    if (status !== "pending" && status !== "trusted" || status === "pending" && !pairingId) {
+      throw modelError("peer_store_invalid", "O índice contém um estado de pareamento inválido.");
+    }
+    if (pairingId) validatePairingId(pairingId);
+    if (!peerDirectoryPattern.test(id) || ids.has(id)) throw modelError("peer_store_invalid", "O índice contém uma pasta inválida ou repetida.");
     for (const value of [firstConnectedAt, lastConnectedAt]) {
       const date = new Date(value);
       if (!Number.isFinite(date.getTime()) || date.toISOString() !== value) throw modelError("peer_store_invalid", "O índice contém uma data inválida.");
     }
     validatePeerData(displayName, ipAddress);
-    const folder = await directory.entry(`peers/${id}`);
+    const folder = await directory.entry(id);
     if (!(folder instanceof Directory)) throw modelError("peer_store_invalid", "O registro precisa estar em uma pasta.");
     const files = await folder.list();
-    if (files.length !== 1 || !(files[0] instanceof File) || files[0].path !== `peers/${id}/certificado.cert`) {
+    if (files.length !== 1 || !(files[0] instanceof File) || files[0].path !== `${id}/certificado.cert`) {
       throw modelError("peer_store_invalid", "Uma pasta de peer contém dados inesperados.");
     }
     const certificatePem = await readText(files[0]);
     const fingerprint = certificate(certificatePem).fingerprint256;
     if (identities.has(fingerprint)) throw modelError("peer_store_invalid", "O índice repete a identidade de um peer.");
     ids.add(id); identities.add(fingerprint);
-    peers.push({ directory: id, displayName, ipAddress, firstConnectedAt, lastConnectedAt, certificatePem });
+    peers.push({ directory: id, displayName, ipAddress, firstConnectedAt, lastConnectedAt, certificatePem, pairingId, status });
   }
-  const folder = await directory.entry("peers");
-  if (!(folder instanceof Directory)) throw modelError("peer_store_invalid", "A área de peers precisa ser uma pasta.");
-  const children = await folder.list();
-  if (children.length !== peers.length + 1 || children.some(child => child.path !== "peers/index.csv" && !ids.has(child.path.slice(6)))) {
+  const children = (await directory.childNames()).filter(name => peerDirectoryPattern.test(name));
+  if (children.length !== peers.length || children.some(name => !ids.has(name))) {
     throw modelError("peer_store_invalid", "Há registros sem correspondência entre o índice e as pastas.");
   }
   return peers;
@@ -170,8 +183,8 @@ async function loadPeers(directory: Directory): Promise<Peer[]> {
  * @param directory Raiz privada do estado local.
  * @param peers Registros completos a gravar.
  */
-async function saveIndex(directory: Directory, peers: readonly Peer[]): Promise<void> {
-  await directory.file("peers/index.csv").write(encodeIndex(peers), directory, true);
+async function saveIndex(directory: Directory, peers: readonly StoredPeer[]): Promise<void> {
+  await directory.file("index.csv").write(encodeIndex(peers), directory, true);
 }
 
 /** Carrega a identidade persistente e confere validade, assinatura e correspondência da chave.
@@ -224,30 +237,48 @@ async function generateIdentity(directory: Directory): Promise<void> {
 
 /** Prepara a identidade e o índice; reinícios nunca regeneram uma identidade existente.
  * Falta de certificado/chave em uma pasta tls existente é erro, não primeira execução.
+ * Os registros ficam diretamente em 01 a 99, com index.csv e tls na mesma raiz.
+ * Arquivos de código nessa raiz não são registros e não são lidos ou removidos.
  * @param options Caminhos privados e compartilhados fornecidos pela inicialização local.
  * @returns Somente o certificado público; a chave permanece no armazenamento privado.
  */
 export function initialize(options: PeerStorageOptions): Promise<{ certificatePem: string }> {
   return serialized(async () => {
-    const directory = await Directory.openPrivate(options.stateDir, [options.rootDir, options.stagingDir, options.repositoryDir]);
+    const directory = await Directory.openPrivate(options.stateDir, [options.rootDir, options.stagingDir], options.repositoryDir);
+    const names = await directory.childNames();
+    if (names.includes("peers")) {
+      throw modelError("peer_store_migration_required", "Há armazenamento no formato anterior; migre os registros antes de iniciar.");
+    }
+    const hasIndex = names.includes("index.csv");
     let exists = true;
     try { await directory.inspect("tls", "directory"); }
     catch (error) { if (errorCode(error) !== "entry_not_found") throw error; exists = false; }
     if (!exists) {
-      if ((await directory.list()).length !== 0) {
+      if (hasIndex || names.some(name => name.startsWith(".operation-"))) {
         throw modelError("invalid_identity", "A identidade local está ausente em um armazenamento já utilizado.");
       }
-      await generateIdentity(directory);
     }
+    if (!hasIndex) {
+      // Posições vazias do esqueleto não são peers. rmdir nunca apaga conteúdo.
+      for (const name of names.filter(name => peerDirectoryPattern.test(name))) {
+        try { await directory.removeEmptyChild(name); }
+        catch (error) {
+          if (errorCode(error) === "ENOTEMPTY" || errorCode(error) === "EEXIST") {
+            throw modelError("peer_store_invalid", "Há dados de peers existentes sem um índice.");
+          }
+          throw error;
+        }
+      }
+    }
+    if (!exists) await generateIdentity(directory);
     const identity = await readIdentity(directory);
-    const peers = await directory.create("peers");
-    try { await directory.inspect("peers/index.csv", "file"); }
-    catch (error) {
-      if (errorCode(error) !== "entry_not_found") throw error;
-      if ((await peers.directory.list()).length !== 0) throw modelError("peer_store_invalid", "O índice está ausente e há dados de peers existentes.");
-      await directory.file("peers/index.csv").write(encodeIndex([]), directory);
+    if (!hasIndex) await directory.file("index.csv").write(encodeIndex([]), directory);
+    let records = await loadPeers(directory);
+    // Um reinício não retoma aceites humanos nem promove uma preparação incompleta.
+    for (const record of records.filter(peer => peer.status === "pending")) {
+      await deleteRecord(directory, records, record);
+      records = records.filter(peer => peer !== record);
     }
-    await loadPeers(directory);
     storage = directory;
     return { certificatePem: identity.certificatePem };
   });
@@ -260,7 +291,7 @@ export function localIdentity(): Promise<{ certificatePem: string; privateKeyPem
 
 /** Lista registros persistidos; essa consulta não autentica nem atualiza conexões. */
 export function listPeers(): Promise<Peer[]> {
-  return serialized(() => loadPeers(state()));
+  return serialized(async () => (await loadPeers(state())).filter(peer => peer.status === "trusted").map(publicPeer));
 }
 
 /** Localiza um peer pelo certificado, independentemente de IP e apelido.
@@ -269,7 +300,8 @@ export function listPeers(): Promise<Peer[]> {
 export function findPeer(certificatePem: string): Promise<Peer | undefined> {
   return serialized(async () => {
     const identity = certificate(certificatePem).fingerprint256;
-    return (await loadPeers(state())).find(peer => certificate(peer.certificatePem).fingerprint256 === identity);
+    const peer = (await loadPeers(state())).find(peer => peer.status === "trusted" && certificate(peer.certificatePem).fingerprint256 === identity);
+    return peer ? publicPeer(peer) : undefined;
   });
 }
 
@@ -278,40 +310,114 @@ export function findPeer(certificatePem: string): Promise<Peer | undefined> {
  * @param input Certificado, apelido e IP obtidos do pareamento confirmado.
  */
 export function savePeer(input: Pick<Peer, "certificatePem" | "displayName" | "ipAddress">): Promise<Peer> {
+  return serialized(async () => publicPeer(await storePeer(input, "", "trusted")));
+}
+
+/** Confere o identificador da sessão sem aceitar caminhos ou identificadores arbitrários.
+ * @param pairingId UUID v4 criado pelo controller.
+ */
+function validatePairingId(pairingId: string): void {
+  if (typeof pairingId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(pairingId)) {
+    throw modelError("validation_failed", "Informe um identificador válido de sessão de pareamento.");
+  }
+}
+
+/** Retira os campos de preparação das consultas públicas de peers.
+ * @param peer Registro privado persistido.
+ */
+function publicPeer(peer: StoredPeer): Peer {
+  const { pairingId: _pairingId, status: _status, ...result } = peer;
+  return result;
+}
+
+/** Prepara um registro sem liberar confiança; repetir a mesma sessão é idempotente.
+ * @param input Certificado, apelido e IP conferidos pelo controller.
+ * @param pairingId Sessão vinculada aos dois certificados e aos aceites locais.
+ */
+export function preparePeer(input: Pick<Peer, "certificatePem" | "displayName" | "ipAddress">, pairingId: string): Promise<void> {
   return serialized(async () => {
-    validatePeerData(input.displayName, input.ipAddress);
-    const identity = certificate(input.certificatePem, true).fingerprint256;
+    validatePairingId(pairingId);
+    await storePeer(input, pairingId, "pending");
+  });
+}
+
+/** Confirma somente o registro preparado pela mesma sessão, após a confirmação remota.
+ * @param certificatePem Certificado cuja posse e aceite foram verificados pelo controller.
+ * @param pairingId Identificador da preparação concluída nos dois dispositivos.
+ */
+export function confirmPeer(certificatePem: string, pairingId: string): Promise<Peer> {
+  return serialized(async () => {
+    validatePairingId(pairingId);
+    const identity = certificate(certificatePem, true).fingerprint256;
+    const peers = await loadPeers(state());
+    const peer = peers.find(item => certificate(item.certificatePem).fingerprint256 === identity && item.pairingId === pairingId);
+    if (!peer) throw modelError("pairing_not_ready", "Não há preparação desta sessão para confirmar.");
+    if (peer.status === "pending") {
+      peer.status = "trusted";
+      peer.firstConnectedAt = peer.lastConnectedAt = new Date().toISOString();
+      await saveIndex(state(), peers);
+    }
+    return publicPeer(peer);
+  });
+}
+
+/** Descarta somente uma preparação desta sessão; nunca remove um peer já confiável.
+ * @param certificatePem Certificado do pedido abandonado.
+ * @param pairingId Identificador da sessão que preparou o registro.
+ */
+export function discardPreparedPeer(certificatePem: string, pairingId: string): Promise<void> {
+  return serialized(async () => {
+    validatePairingId(pairingId);
+    const identity = certificate(certificatePem).fingerprint256;
     const directory = state();
     const peers = await loadPeers(directory);
-    const existing = peers.find(peer => certificate(peer.certificatePem).fingerprint256 === identity);
-    const now = new Date().toISOString();
-    if (existing) {
-      existing.displayName = input.displayName; existing.ipAddress = input.ipAddress; existing.lastConnectedAt = now;
-      await saveIndex(directory, peers);
+    const peer = peers.find(item => item.status === "pending" && item.pairingId === pairingId && certificate(item.certificatePem).fingerprint256 === identity);
+    if (peer) await deleteRecord(directory, peers, peer);
+  });
+}
+
+/** Grava ou reencontra um registro dentro da fila do armazenamento.
+ * @param input Dados validados do peer.
+ * @param pairingId Sessão de preparação, ou vazio para o contrato legado de savePeer.
+ * @param status Estado inicial do novo registro.
+ */
+async function storePeer(input: Pick<Peer, "certificatePem" | "displayName" | "ipAddress">, pairingId: string, status: StoredPeer["status"]): Promise<StoredPeer> {
+  validatePeerData(input.displayName, input.ipAddress);
+  const identity = certificate(input.certificatePem, true).fingerprint256;
+  const directory = state();
+  const peers = await loadPeers(directory);
+  const existing = peers.find(peer => certificate(peer.certificatePem).fingerprint256 === identity);
+  const now = new Date().toISOString();
+  if (existing) {
+    if (pairingId || existing.status === "pending") {
+      if (existing.pairingId !== pairingId) throw modelError("pairing_conflict", "A identidade já pertence a outro registro ou sessão.");
       return existing;
     }
-    const id = Array.from({ length: 99 }, (_, index) => String(index + 1).padStart(2, "0"))
-      .find(candidate => !peers.some(peer => peer.directory === candidate));
-    if (!id) throw modelError("peer_limit_reached", "As 99 posições de peers estão ocupadas.");
-    const peer: Peer = { ...input, directory: id, firstConnectedAt: now, lastConnectedAt: now };
-    const temporary = await directory.temporary();
-    let target: Directory | undefined;
-    try {
-      await directory.file(`${temporary.path}/certificado.cert`).write(input.certificatePem, directory);
-      const moved = await temporary.move(`peers/${id}`);
-      if (!(moved instanceof Directory)) throw modelError("peer_store_invalid", "O registro não é uma pasta.");
-      target = moved;
-      peers.push(peer);
-      await saveIndex(directory, peers);
-    } catch (error) {
-      // O índice já publicado não deve perder o certificado por uma falha posterior de limpeza.
-      if (target && errorCode(error) === "publication_cleanup_failed") throw error;
-      try { await (target ?? temporary).remove(); }
-      catch (cleanupError) { throw new AggregateError([error, cleanupError], "Falha ao salvar e limpar o registro de peer."); }
-      throw error;
-    }
-    return peer;
-  });
+    existing.displayName = input.displayName; existing.ipAddress = input.ipAddress; existing.lastConnectedAt = now;
+    await saveIndex(directory, peers);
+    return existing;
+  }
+  const id = Array.from({ length: 99 }, (_, index) => String(index + 1).padStart(2, "0"))
+    .find(candidate => !peers.some(peer => peer.directory === candidate));
+  if (!id) throw modelError("peer_limit_reached", "As 99 posições de peers estão ocupadas.");
+  const peer: StoredPeer = { ...input, directory: id, firstConnectedAt: now, lastConnectedAt: now, pairingId, status };
+  const temporary = await directory.temporary();
+  let target: Directory | undefined;
+  try {
+    await directory.file(`${temporary.path}/certificado.cert`).write(input.certificatePem, directory);
+    const moved = await temporary.move(id);
+    if (!(moved instanceof Directory)) throw modelError("peer_store_invalid", "O registro não é uma pasta.");
+    target = moved;
+    peers.push(peer);
+    await saveIndex(directory, peers);
+  } catch (error) {
+    // O índice já publicado não deve perder o certificado por uma falha posterior de limpeza.
+    if (target && errorCode(error) === "publication_cleanup_failed") throw error;
+    try { await (target ?? temporary).remove(); }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], "Falha ao salvar e limpar o registro de peer."); }
+    throw error;
+  }
+  return peer;
 }
 
 /** Atualiza o apelido sem alterar os horários ou a identidade.
@@ -322,12 +428,12 @@ export function updatePeer(certificatePem: string, displayName: string): Promise
   return serialized(async () => {
     const identity = certificate(certificatePem).fingerprint256;
     const peers = await loadPeers(state());
-    const peer = peers.find(item => certificate(item.certificatePem).fingerprint256 === identity);
+    const peer = peers.find(item => item.status === "trusted" && certificate(item.certificatePem).fingerprint256 === identity);
     if (!peer) throw modelError("peer_not_found", "O peer não está cadastrado.");
     validatePeerData(displayName, peer.ipAddress);
     peer.displayName = displayName;
     await saveIndex(state(), peers);
-    return peer;
+    return publicPeer(peer);
   });
 }
 
@@ -339,12 +445,12 @@ export function recordConnection(certificatePem: string, ipAddress: string): Pro
   return serialized(async () => {
     const identity = certificate(certificatePem, true).fingerprint256;
     const peers = await loadPeers(state());
-    const peer = peers.find(item => certificate(item.certificatePem).fingerprint256 === identity);
+    const peer = peers.find(item => item.status === "trusted" && certificate(item.certificatePem).fingerprint256 === identity);
     if (!peer) throw modelError("peer_not_found", "O peer não está cadastrado.");
     validatePeerData(peer.displayName, ipAddress);
     peer.ipAddress = ipAddress; peer.lastConnectedAt = new Date().toISOString();
     await saveIndex(state(), peers);
-    return peer;
+    return publicPeer(peer);
   });
 }
 
@@ -356,22 +462,31 @@ export function removePeer(certificatePem: string): Promise<void> {
     const identity = certificate(certificatePem).fingerprint256;
     const directory = state();
     const peers = await loadPeers(directory);
-    const peer = peers.find(item => certificate(item.certificatePem).fingerprint256 === identity);
+    const peer = peers.find(item => item.status === "trusted" && certificate(item.certificatePem).fingerprint256 === identity);
     if (!peer) throw modelError("peer_not_found", "O peer não está cadastrado.");
-    const temporary = await directory.temporary();
-    const source = await directory.entry(`peers/${peer.directory}`);
-    const moved = await source.move(`${temporary.path}/record`);
-    try { await saveIndex(directory, peers.filter(item => item !== peer)); }
-    catch (error) {
-      if (errorCode(error) === "publication_cleanup_failed") {
-        try { await temporary.remove(); }
-        catch (cleanupError) { throw new AggregateError([error, cleanupError], "Falha ao limpar os dados do peer removido."); }
-        throw error;
-      }
-      try { await moved.move(`peers/${peer.directory}`); await temporary.remove(); }
-      catch (rollbackError) { throw new AggregateError([error, rollbackError], "Falha ao remover peer e restaurar seu registro."); }
+    await deleteRecord(directory, peers, peer);
+  });
+}
+
+/** Retira um registro e seu certificado, restaurando a pasta se a publicação do índice falhar.
+ * @param directory Armazenamento privado.
+ * @param peers Índice carregado dentro da fila serializada.
+ * @param peer Registro exato a retirar.
+ */
+async function deleteRecord(directory: Directory, peers: StoredPeer[], peer: StoredPeer): Promise<void> {
+  const temporary = await directory.temporary();
+  const source = await directory.entry(peer.directory);
+  const moved = await source.move(`${temporary.path}/record`);
+  try { await saveIndex(directory, peers.filter(item => item !== peer)); }
+  catch (error) {
+    if (errorCode(error) === "publication_cleanup_failed") {
+      try { await temporary.remove(); }
+      catch (cleanupError) { throw new AggregateError([error, cleanupError], "Falha ao limpar os dados do peer removido."); }
       throw error;
     }
-    await temporary.remove();
-  });
+    try { await moved.move(peer.directory); await temporary.remove(); }
+    catch (rollbackError) { throw new AggregateError([error, rollbackError], "Falha ao remover peer e restaurar seu registro."); }
+    throw error;
+  }
+  await temporary.remove();
 }

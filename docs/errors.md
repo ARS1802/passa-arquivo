@@ -1,8 +1,9 @@
 # Erros e validação
 
-A configuração já pode apontar erros no terminal. A API ainda não recebe
-requisições; as respostas HTTP abaixo descrevem o funcionamento esperado.
-Os nomes dos erros e alguns detalhes de validação ainda podem mudar.
+A inicialização aponta erros no terminal e as rotas implementadas traduzem
+falhas conhecidas para respostas HTTP sem detalhes internos. O catálogo inclui
+os contratos de arquivos e de pareamento. Os resultados efetivamente verificados
+estão em [Testes](testing.md).
 
 ## Erros de configuração no terminal
 
@@ -162,11 +163,29 @@ Depois de autenticar o peer, uma operação proibida sobre arquivos pode retorna
 `403`, e parâmetros incorretos podem retornar os erros da tabela. A proteção do
 controle local tem contrato próprio ainda em definição.
 
-O pareamento deverá distinguir pedido recusado, código incorreto, expiração,
-excesso de tentativas, descoberta encerrada, troca de certificado e falha ao
-salvar a confiança. Nomes de códigos e respostas HTTP desses casos ainda serão
-fechados com o [contrato de conexão](connection.md). Uma falha não pode revelar o
-código esperado, a chave privada ou a lista de peers.
+O pareamento compara impressões digitais completas dos certificados por ação
+local. Os erros das mensagens HTTP estão no [contrato de conexão](connection.md):
+
+| HTTP | Código | Significado |
+| --- | --- | --- |
+| 403 | `pairing_peer_rejected` | O certificado TLS não é o participante da sessão. |
+| 404 | `pairing_request_not_found` | UUID válido sem sessão correspondente. |
+| 409 | `pairing_not_ready` | Falta aceite local ou preparação para confirmar. |
+| 409 | `pairing_conflict` | Identidade já associada a outro pedido ou registro. |
+| 409 | `pairing_request_closed` | Sessão encerrada, expirada ou em fase incompatível. |
+| 409 | `pairing_in_progress` | Outra operação assíncrona ocupa esta sessão. |
+| 409 | `peer_limit_reached` | As 99 posições estão ocupadas, inclusive preparações. |
+| 429 | `pairing_limit_reached` | A janela atingiu 256 pedidos. |
+| 422 | `validation_failed` | UUID, nome, prazo ou campos da mensagem inválidos. |
+| 500 | `internal_error` | A gravação ou outra operação de infraestrutura não pôde terminar. |
+
+Nas chamadas locais, `fingerprint_mismatch` indica uma comparação incorreta e
+`pairing_attempts_exceeded` indica a terceira comparação incorreta, que recusa o
+pedido. `pairing_timeout`, `pairing_unreachable` e `pairing_failed` indicam falha
+de prazo, conexão/TLS ou resposta/gravação remota. Essas falhas não confirmam o
+pareamento. Nenhuma resposta revela a chave privada, caminhos internos ou a lista
+de peers. Impressões digitais não são códigos secretos, mas a fonte independente
+da comparação precisa ser confiável.
 
 Uma falha de gravação em um dos dispositivos não permite anunciar confirmação
 bilateral concluída. O tratamento de repetição e recuperação está descrito em
