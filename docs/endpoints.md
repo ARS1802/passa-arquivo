@@ -2,9 +2,9 @@
 
 A API recebe requisições HTTPS com as verificações de identidade descritas neste
 guia. A descoberta e o pareamento têm rotas temporárias próprias. As operações
-de arquivos abaixo descrevem o contrato do sistema; upload multipart e cópia HTTP
-ainda têm pendências de implementação. Consulte [Testes](testing.md) para distinguir
-os fluxos verificados dos cenários previstos.
+de arquivos e saúde abaixo já estão implementadas e integradas ao model,
+incluindo upload multipart, cópia e ZIP. Consulte [Testes](testing.md) para
+distinguir os fluxos verificados dos cenários ainda não executados.
 
 Uma rota, também chamada de endpoint, combina um método HTTP com um endereço.
 Por exemplo, `GET /api/v2/files` servirá para baixar um arquivo e
@@ -78,9 +78,9 @@ caminho e barra invertida (`\`) retornarão `400 invalid_path`. Se a barra
 invertida fizer parte de um caminho absoluto reconhecido, prevalecerá o `403`.
 
 Links simbólicos e entradas que não sejam arquivos comuns ou pastas retornarão
-`403 entry_forbidden`. O tratamento de arquivos com vários hard links
-(`nlink > 1`) e de caminhos que atravessam dispositivos ainda está em definição:
-os erros considerados são `403 entry_forbidden` e `409 cross_device_operation`,
+`403 entry_forbidden`. Arquivos com vários hard links (`nlink > 1`) e caminhos
+que atravessam dispositivos são recusados com `403 entry_forbidden` e
+`409 cross_device_operation`,
 respectivamente. Veja os exemplos e os limites em [arquivos e pastas](filesystem.md).
 
 Campo obrigatório ausente é `422 validation_failed`; campo presente com sintaxe de caminho inválida é `400 invalid_path`. Um parâmetro opcional usa seu padrão somente quando omitido, nunca quando contém `""` ou `null`.
@@ -88,8 +88,7 @@ Campo obrigatório ausente é `422 validation_failed`; campo presente com sintax
 ### Informações de arquivos e pastas: `EntryMetadata`
 
 Metadados são informações sobre um arquivo ou pasta, como nome e tamanho.
-`EntryMetadata` é o nome dado ao objeto JSON abaixo; ainda não existe um tipo
-TypeScript com esse nome no código.
+`EntryMetadata` é o tipo definido em `model/file/File.ts` para o objeto JSON abaixo.
 
 | Campo | Tipo JSON | Obrigatoriedade/padrão | Significado e restrições |
 | --- | --- | --- | --- |
@@ -139,7 +138,7 @@ no guia de [erros](errors.md).
 ### Como ler os exemplos
 
 Os comandos abaixo ilustram chamadas depois do pareamento. Eles não realizam
-busca, confirmação por código ou registro de confiança.
+busca, conferência de impressão digital ou registro de confiança.
 
 `LOCAL_CERT` e `LOCAL_KEY` representam o certificado e a chave privada do cliente;
 `PEER_CERT`, o certificado público de destino já confirmado. São caminhos locais
@@ -147,11 +146,19 @@ do cliente. A chave privada não é enviada como arquivo ao peer: o TLS usa-a pa
 provar sua posse.
 
 ```sh
-BASE_URL='http://dispositivo-b:8443'
-LOCAL_CERT='/caminho/privado/certificado-local.pem'
-LOCAL_KEY='/caminho/privado/chave-local.pem'
-PEER_CERT='/caminho/privado/certificado-confirmado-de-b.pem'
+BASE_URL='https://nome-do-certificado-de-b:8443'
+LOCAL_CERT='model/peer/tls/server.crt'
+LOCAL_KEY='model/peer/tls/server.key'
+PEER_CERT='model/peer/01/certificado.cert'
 ```
+
+Execute a partir da raiz da instalação cliente. Os caminhos acima usam o estado
+padrão; ajuste-os se houver outro `state-dir` e substitua `01` pela pasta do peer
+de destino. Troque `nome-do-certificado-de-b` pelo nome presente no certificado
+do servidor e faça esse nome resolver para seu IP atual. Por exemplo, o curl
+aceita `--resolve 'nome-do-certificado-de-b:8443:192.168.1.35'`, com nome e IP
+substituídos pelos valores reais. A instalação padrão gera um nome único, não
+um certificado para o IP `127.0.0.1`.
 
 Estes exemplos usam sintaxe de shell Linux e exigem que o nome da URL seja
 compatível com o certificado. A identidade persistente quando o IP muda exige
@@ -170,17 +177,16 @@ O destino organiza as rotas principais nestes arquivos:
 | Arquivo | Finalidade |
 | --- | --- |
 | [`connect.ts`](../controller/api/routes/connect.ts) | Iniciar e conduzir o fluxo de descoberta e pareamento. |
-| [`download.ts`](../controller/api/routes/download.ts) | Solicitar o recebimento de arquivos de outro peer. |
+| [`download.ts`](../controller/api/routes/download.ts) | Servir um arquivo local ou ZIP ao peer autenticado. |
 | [`health.ts`](../controller/api/routes/health.ts) | Verificar se a API responde. |
 | [`navigate.ts`](../controller/api/routes/navigate.ts) | Navegar pelos arquivos e diretórios compartilhados. |
-| [`upload.ts`](../controller/api/routes/upload.ts) | Enviar arquivos para o peer ou coordenar alterações compartilhadas. |
+| [`upload.ts`](../controller/api/routes/upload.ts) | Receber arquivos e encaminhar alterações na raiz compartilhada ao model. |
 
-Essas cinco rotas são indispensáveis porque cobrem os fluxos presentes no
-destino: conectar dispositivos, verificar disponibilidade, navegar, baixar e
-enviar arquivos. As operações mais detalhadas abaixo descrevem comportamentos
-necessários desses fluxos; elas não criam novos arquivos de rota.
+Esses cinco arquivos agrupam os fluxos de conexão, disponibilidade, navegação,
+download e alteração de arquivos. Cada arquivo pode registrar mais de uma rota,
+como mostram os contratos abaixo.
 
-[`GUI/src/api.ts`](../GUI/src/api.ts) será o ponto usado pela interface para
+[`GUI/api.js`](../GUI/api.js) é o local previsto para a interface
 enviar ao controller local as requisições causadas pelas ações do usuário. A
 ação do usuário inicia o fluxo: por exemplo, a pessoa escolhe descobrir peers,
 navegar, baixar ou enviar.
@@ -306,7 +312,7 @@ Lista os arquivos e as pastas que estão diretamente dentro da pasta indicada.
 As pastas aparecerão antes dos arquivos. Dentro de cada grupo, a ordenação
 considerada compara os bytes UTF-8 dos nomes: diferencia maiúsculas de minúsculas
 e não depende do idioma do servidor nem transforma caracteres Unicode
-equivalentes. Esse detalhe ainda pode mudar. A listagem não terá paginação e não
+equivalentes. A listagem não tem paginação e não
 percorrerá subpastas.
 
 **Erros possíveis:** compartilhados de caminhos; `404 entry_not_found` para diretório ausente; `409 entry_conflict` se `path` for arquivo ou componente intermediário incompatível. Link simbólico ou entrada especial entre os filhos examinados faz a listagem inteira falhar com `403 entry_forbidden`, sem ocultar seletivamente a entrada.
@@ -386,8 +392,8 @@ Envia um arquivo para o caminho completo escolhido pelo cliente.
 **Resposta:** arquivo novo: `201 application/json`, com `EntryMetadata` e o
 cabeçalho `Location`. Substituição de um arquivo existente: `204`, sem corpo.
 O limite configurado por `PASSA_UPLOAD_MAX_BYTES` tem padrão de 1 GiB
-(1.073.741.824 bytes). A opção já é validada, mas a recepção do upload ainda
-não existe. Veja [configuração](configuration.md).
+(1.073.741.824 bytes). O model confere os bytes durante a gravação e preserva
+o destino anterior se esse limite for excedido. Veja [configuração](configuration.md).
 
 **Erros possíveis:** compartilhados de caminhos/corpos; `404 entry_not_found` para pai ausente; `409 entry_conflict` para destino diretório, inclusive raiz, ou intermediário não diretório; `413 payload_too_large` ao exceder limite; `422 validation_failed` para campo inesperado, parte ausente ou quantidade de arquivos diferente de um; `400 malformed_request` para estrutura multipart inválida; `409 cross_device_operation` se a publicação não puder manter as garantias entre filesystems.
 
@@ -640,11 +646,11 @@ As entradas são relativas ao diretório solicitado, sem acrescentar um contêin
 
 Os limites de configuração são `PASSA_ZIP_MAX_ENTRIES`, com padrão de 10.000
 entradas, e `PASSA_ZIP_MAX_BYTES`, com padrão de 10 GiB (10.737.418.240 bytes).
-As opções já são validadas, mas a geração do ZIP ainda não existe.
+As opções são validadas na inicialização e aplicadas durante a geração do ZIP.
 
 A forma de contagem considerada inclui arquivos e pastas, mesmo vazias, sem
 contar a própria pasta solicitada. O volume será medido pelos bytes lidos dos
-arquivos antes da compressão. Esses detalhes ainda podem mudar. O ZIP não será
+arquivos antes da compressão. O ZIP não será
 carregado inteiro na memória. Uma falha depois do início da resposta interromperá
 o download, como explicado em [erros](errors.md#transferência-já-iniciada).
 

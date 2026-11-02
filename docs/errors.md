@@ -7,21 +7,18 @@ estão em [Testes](testing.md).
 
 ## Erros de configuração no terminal
 
-`ConfigurationError`, no módulo de configuração da camada de controle, representa
-problemas nos argumentos e nas variáveis de ambiente. Sua mensagem é `Configuração inválida.`;
-`issues` contém uma lista de objetos `{ option: string, message: string }`, sem
-valores fornecidos. Cada opção reconhecida usa seu nome de argumento; nomes
-arbitrários desconhecidos são substituídos por `arguments` ou `environment`.
-As mensagens mostram qual opção corrigir, sem repetir o conteúdo informado.
+`backendOptions` e `startBackend`, em `controller/api/app.ts`, usam o código
+`configuration_invalid` para problemas nos argumentos, no ambiente ou na leitura
+do `.env`. Ao executar `npm run start:backend`, o processo escreve a mensagem
+segura em `stderr` e termina com código **2**. Uma falha inesperada, inclusive ao
+abrir o servidor ou carregar uma identidade inválida, termina com código **1**
+e uma mensagem genérica, sem expor caminhos privados ou chaves.
 
-O comando `check:config` escreve os problemas na saída de
-erros do terminal (`stderr`). O código de saída permite que outros programas
-saibam o resultado: **0** significa opções válidas, **2** significa configuração
-inválida e **1** significa falha inesperada, acompanhada de uma mensagem genérica.
-
-Esse comando confere os valores e as combinações de opções. Ele não lê pastas,
-tokens ou certificados, não imprime a configuração completa e não envia
-respostas HTTP.
+Não há `ConfigurationError`, lista `issues` ou comando `check:config` no código
+atual. A inicialização pode ler e preparar pastas e identidade antes de abrir a
+porta; uma validação textual aceita não garante que toda a inicialização termine.
+Esses erros do processo local não são respostas HTTP. As opções e seus padrões
+estão em [Configuração](configuration.md).
 
 ## Formato das respostas HTTP de erro
 

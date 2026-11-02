@@ -1,9 +1,20 @@
+/**
+ * Responsabilidade: Exibir a tela inicial do modelo do Vite, com links e um contador local;
+ * a integração com arquivos ainda não existe.
+ *
+ * Exemplo prático: Ao clicar no contador, apenas o estado do componente muda; nenhuma
+ * chamada ao backend é feita.
+ */
 import { useState } from 'react'
 import heroImg from './assets/hero.png'
 import reactLogo from './assets/react.svg'
 import viteLogo from './assets/vite.svg'
 import './App.css'
 
+/**
+ * Renderiza a tela inicial e mantém o contador apenas na memória do componente.
+ * @returns Elementos visuais da tela, sem integração com a API.
+ */
 function App() {
   const [count, setCount] = useState(0)
 

@@ -1,9 +1,7 @@
 /**
- * Há dois localhost
- * > vite (aqui)
- * > express (controller)
+ * Responsabilidade: Reservar o local previsto para a comunicação entre GUI e controller;
+ * ainda não há funções implementadas.
  *
- * localhosts se comunicam por http, logo, este arquivo serve de ponte.
- *
- * Quaisquer ações que o usuário tomar na GUI, deve haver a respectiva requisição ao localhost do backend (controller)
+ * Exemplo prático: Uma futura ação de listar arquivos usará este módulo, mas a tela atual
+ * não faz essa requisição.
  */

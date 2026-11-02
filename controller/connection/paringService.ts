@@ -1,3 +1,10 @@
+/**
+ * Responsabilidade: Controlar sessões de pareamento e confirmar confiança após os aceites
+ * locais e as mensagens entre participantes.
+ *
+ * Exemplo prático: Depois de conferir a impressão digital nas duas máquinas, o iniciador
+ * prepara os dois registros e confirma o remoto antes do local.
+ */
 import { randomUUID, X509Certificate } from "node:crypto";
 import { isUtf8 } from "node:buffer";
 import { request as httpsRequest } from "node:https";
@@ -69,6 +76,7 @@ function refreshRequests(): void {
 
 /** Obtém a sessão interna ou informa sua ausência.
  * @param id Identificador da sessão local.
+ * @returns Sessão interna encontrada, com o prazo dos pedidos abertos atualizado.
  */
 function sessionById(id: string): Session {
   validateId(id);
@@ -80,6 +88,7 @@ function sessionById(id: string): Session {
 
 /** Devolve uma cópia sem os controles internos.
  * @param session Sessão mantida em memória.
+ * @returns Cópia pública da sessão e do candidato, sem controles internos.
  */
 function snapshot(session: Session): PairingRequest {
   const { busy: _busy, sent: _sent, signal: _signal, interfaceName: _interface, ...result } = session;
@@ -109,6 +118,7 @@ function lock(session: Session): void {
  * @param role Papel desta instalação.
  * @param id Identificador local ou recebido do iniciador.
  * @param ttlMs Prazo restante do iniciador, limitado pela janela local.
+ * @returns Sessão criada ou reencontrada para o mesmo participante.
  */
 async function createSession(peer: Candidate, role: PairingRequest["role"], id: string = randomUUID(), ttlMs: number = discoveryLimits.windowMs): Promise<Session> {
   validateId(id);
@@ -163,6 +173,7 @@ async function createSession(peer: Candidate, role: PairingRequest["role"], id: 
 
 /** Cria somente a sessão local; startPairingRequest também envia o pedido ao outro dispositivo.
  * @param peer Candidato escolhido pelo usuário local.
+ * @returns Cópia do pedido local, ainda sem envio ou aceite remoto.
  */
 export async function createPairingRequest(peer: Candidate): Promise<PairingRequest> {
   return snapshot(await createSession(peer, "initiator"));
@@ -170,10 +181,13 @@ export async function createPairingRequest(peer: Candidate): Promise<PairingRequ
 
 /** Consulta uma cópia do pedido local.
  * @param id Identificador da sessão.
+ * @returns Cópia pública do pedido encontrado.
  */
 export function getPairingRequest(id: string): PairingRequest { return snapshot(sessionById(id)); }
 
-/** Lista somente os pedidos da instalação local; essa operação não é uma rota remota. */
+/** Lista somente os pedidos da instalação local; essa operação não é uma rota remota.
+ * @returns Cópias dos pedidos mantidos nesta janela local.
+ */
 export function listPairingRequests(): PairingRequest[] {
   refreshRequests(); return [...requests.values()].map(snapshot);
 }
@@ -182,6 +196,7 @@ export function listPairingRequests(): PairingRequest[] {
  * @param peer Identidade apresentada no handshake e nome recebido no pedido.
  * @param id Sessão criada pelo iniciador.
  * @param ttlMs Prazo restante, limitado a 120 segundos e à janela local.
+ * @returns Cópia do pedido recebido, sem conceder confiança.
  */
 export async function receivePairingRequest(peer: Candidate, id: string, ttlMs: number): Promise<PairingRequest> {
   return snapshot(await createSession(peer, "receiver", id, ttlMs));
@@ -190,6 +205,7 @@ export async function receivePairingRequest(peer: Candidate, id: string, ttlMs: 
 /** Confere se o remetente TLS é o participante registrado e prepara uma resposta mínima.
  * @param id Sessão consultada pelo outro participante.
  * @param certificatePem Certificado extraído do socket TLS pelo controller.
+ * @returns Estado mínimo da sessão, após conferir o certificado do participante.
  */
 export function pairingMessage(id: string, certificatePem: string): PairingMessage {
   const session = sessionById(id);
@@ -204,6 +220,7 @@ export function pairingMessage(id: string, certificatePem: string): PairingMessa
  * @param method Método HTTP da mensagem.
  * @param suffix Sufixo interno da rota, sem valores recebidos do peer.
  * @param body Objeto JSON; omitido em GET.
+ * @returns Resposta remota validada; falhas de TLS, formato ou prazo são propagadas.
  */
 async function send(session: Session, method: string, suffix: string, body?: object): Promise<PairingMessage> {
   if (session.signal.aborted || Date.now() >= Date.parse(session.expiresAt)) throw modelError("pairing_request_closed", "A janela da sessão foi encerrada.");
@@ -229,10 +246,19 @@ async function send(session: Session, method: string, suffix: string, body?: obj
       port: discoveryLimits.port, method, path: `/connect/requests${suffix}`, agent: false,
       cert: identity.certificatePem, key: identity.privateKeyPem, ca: [session.peer.certificatePem],
       rejectUnauthorized: true, minVersion: "TLSv1.3", maxVersion: "TLSv1.3", signal: session.signal,
+      /** Confere o certificado exato, pois o IP não é uma identidade permanente.
+       * @param _host Destino da conexão; não é usado como prova de identidade.
+       * @param presented Certificado apresentado pelo servidor no handshake TLS.
+       * @returns undefined se o certificado coincide; erro de recusa caso contrário.
+       */
       checkServerIdentity: (_host, presented) => presented.raw.equals(expected.raw)
         ? undefined : modelError("pairing_peer_rejected", "O destino apresentou outro certificado."),
       headers: content === undefined ? {} : { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(content) },
-    }, async response => {
+    },
+    /** Lê a mensagem completa e valida seu formato antes de atualizar o aceite remoto.
+     * @param response Resposta HTTPS do participante registrado na sessão.
+     */
+    async response => {
       try {
         if (!/^application\/(?:problem\+)?json(?:;|$)/i.test(String(response.headers["content-type"]))) throw new Error("Resposta inválida.");
         const chunks: Buffer[] = []; let total = 0;
@@ -256,7 +282,15 @@ async function send(session: Session, method: string, suffix: string, body?: obj
         finish(undefined, value);
       } catch { finish(modelError("pairing_failed", "O outro dispositivo retornou uma resposta inválida.")); outgoing.destroy(); }
     });
-    outgoing.on("error", error => finish(modelError(session.signal.aborted ? "pairing_request_closed" : errorCode(error) === "pairing_peer_rejected" ? "pairing_peer_rejected" : "pairing_unreachable", "A mensagem de pareamento não foi concluída.")));
+    /** Traduz a falha de transporte sem expor detalhes do socket ou do certificado.
+     * @param error Erro emitido pela requisição HTTPS.
+     */
+    outgoing.on("error", error => {
+      let code = "pairing_unreachable";
+      if (session.signal.aborted) code = "pairing_request_closed";
+      else if (errorCode(error) === "pairing_peer_rejected") code = "pairing_peer_rejected";
+      finish(modelError(code, "A mensagem de pareamento não foi concluída."));
+    });
     timeout = setTimeout(() => { finish(modelError("pairing_timeout", "O outro dispositivo excedeu o prazo da mensagem.")); outgoing.destroy(); }, discoveryLimits.attemptMs);
     outgoing.end(content);
   });
@@ -265,6 +299,7 @@ async function send(session: Session, method: string, suffix: string, body?: obj
 /** Envia o pedido real para o candidato, sem aceitar ou gravar confiança.
  * @param peer Candidato escolhido localmente.
  * @param displayName Nome de exibição desta instalação, sem uso como prova de identidade.
+ * @returns Pedido atualizado após a resposta do outro dispositivo.
  */
 export async function startPairingRequest(peer: Candidate, displayName: string): Promise<PairingRequest> {
   if (typeof displayName !== "string" || !displayName || !displayName.isWellFormed() || displayName.includes("\0")) throw modelError("validation_failed", "Informe o nome local.");
@@ -282,6 +317,7 @@ export async function startPairingRequest(peer: Candidate, displayName: string):
  * Apenas uma chamada local pode registrar este aceite; não há rota remota equivalente.
  * @param id Sessão exibida ao usuário.
  * @param expectedFingerprint SHA-256 completo do outro dispositivo, com ou sem dois-pontos.
+ * @returns Pedido com aceite local, após conferir a impressão digital completa.
  */
 export async function acceptPairingRequest(id: string, expectedFingerprint: string): Promise<PairingRequest> {
   const session = sessionById(id); assertOpen(session);
@@ -302,6 +338,7 @@ export async function acceptPairingRequest(id: string, expectedFingerprint: stri
 
 /** Consulta o estado remoto sem aceitar pedidos ou iniciar a gravação.
  * @param id Sessão já enviada ao outro dispositivo.
+ * @returns Pedido atualizado com o estado informado pelo outro participante.
  */
 export async function refreshPairingRequest(id: string): Promise<PairingRequest> {
   const session = sessionById(id); assertOpen(session); lock(session);
@@ -326,6 +363,7 @@ async function prepare(session: Session): Promise<void> {
 /** Recebe a preparação do iniciador, sem substituir o aceite do usuário desta máquina.
  * @param id Sessão autenticada pelo controller.
  * @param certificatePem Certificado do remetente TLS.
+ * @returns Estado mínimo após preparar o registro local sem autorizar arquivos.
  */
 export async function prepareReceivedPairing(id: string, certificatePem: string): Promise<PairingMessage> {
   pairingMessage(id, certificatePem);
@@ -351,6 +389,7 @@ async function confirm(session: Session): Promise<void> {
 /** Confirma a ponta receptora após os dois aceites e as duas preparações.
  * @param id Identificador da sessão preparada.
  * @param certificatePem Certificado do iniciador no TLS.
+ * @returns Estado mínimo após confirmar o registro e atualizar a confiança TLS.
  */
 export async function confirmReceivedPairing(id: string, certificatePem: string): Promise<PairingMessage> {
   pairingMessage(id, certificatePem);
@@ -366,6 +405,7 @@ export async function confirmReceivedPairing(id: string, certificatePem: string)
 /** Conclui pelo iniciador: prepara A, prepara B, confirma B e só então confirma A.
  * Falhas são propagadas; repetir a mesma sessão retoma as operações idempotentes.
  * @param id Sessão iniciada nesta instalação e aceita pelos dois usuários.
+ * @returns Pedido confirmado após concluir as duas pontas.
  */
 export async function completePairingRequest(id: string): Promise<PairingRequest> {
   const session = sessionById(id); lock(session);
@@ -395,6 +435,7 @@ async function closeRequestUnlocked(session: Session, status: "rejected" | "canc
  * @param session Sessão local ou recebida.
  * @param status Motivo do encerramento.
  * @param notify Envia DELETE ao outro participante quando a sessão ainda está acessível.
+ * @returns Pedido encerrado após descartar a preparação e, quando solicitado, avisar o remoto.
  */
 async function closeRequest(session: Session, status: "rejected" | "cancelled", notify: boolean): Promise<PairingRequest> {
   lock(session);
@@ -411,6 +452,7 @@ async function closeRequest(session: Session, status: "rejected" | "cancelled", 
 
 /** Recusa localmente e avisa o outro participante; falhas de gravação ou comunicação são propagadas.
  * @param id Identificador do pedido.
+ * @returns Pedido recusado após a limpeza local e a tentativa de notificação.
  */
 export async function rejectPairingRequest(id: string): Promise<PairingRequest> {
   return closeRequest(sessionById(id), "rejected", true);
@@ -418,6 +460,7 @@ export async function rejectPairingRequest(id: string): Promise<PairingRequest> 
 
 /** Cancela localmente e avisa o outro participante, sem remover confiança já concluída.
  * @param id Identificador do pedido.
+ * @returns Pedido cancelado após a limpeza local e a tentativa de notificação.
  */
 export async function cancelPairingRequest(id: string): Promise<PairingRequest> {
   return closeRequest(sessionById(id), "cancelled", true);
@@ -427,6 +470,7 @@ export async function cancelPairingRequest(id: string): Promise<PairingRequest> 
  * @param id Sessão do remetente autenticado.
  * @param certificatePem Certificado obtido do TLS.
  * @param reason Motivo de encerramento enviado pelo participante.
+ * @returns Estado mínimo da sessão encerrada pelo participante.
  */
 export async function receivePairingClosure(id: string, certificatePem: string, reason: "rejected" | "cancelled"): Promise<PairingMessage> {
   pairingMessage(id, certificatePem);

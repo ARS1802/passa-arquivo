@@ -1,3 +1,10 @@
+/**
+ * Responsabilidade: Ler a configuração, integrar o model e registrar a API de arquivos
+ * protegida por mTLS.
+ *
+ * Exemplo prático: Ao iniciar o backend, carrega a identidade persistida e só permite
+ * consultar /health com um certificado confiável.
+ */
 import express, { type Express } from "express";
 import { constants, X509Certificate } from "node:crypto";
 import { access, mkdir, realpath } from "node:fs/promises";
@@ -39,6 +46,7 @@ const connections = new WeakMap<TLSSocket, Promise<void>>();
 
 /** Confere prova de posse validada pelo TLS, validade e certificado exato persistido.
  * @param socket Conexão TLS recebida pelo servidor, nunca dados de cabeçalhos HTTP.
+ * @returns Certificado público do peer confiável com conexão TLS válida.
  */
 async function verifyPeer(socket: TLSSocket): Promise<string> {
   if (!socket.authorized || !socket.encrypted || socket.getProtocol() !== "TLSv1.3" || socket.isSessionReused()) {
@@ -59,6 +67,7 @@ async function verifyPeer(socket: TLSSocket): Promise<string> {
 
 /** Registra cada nova conexão autenticada uma vez, conservando o primeiro pareamento.
  * @param socket Socket que terminou um handshake TLS completo.
+ * @returns Operação de autenticação e registro associada à conexão.
  */
 function authenticateConnection(socket: TLSSocket): Promise<void> {
   const existing = connections.get(socket);
@@ -75,6 +84,7 @@ function authenticateConnection(socket: TLSSocket): Promise<void> {
 /** Cria a aplicação sem abrir servidor nem preparar identidade ou pastas.
  * Toda rota, inclusive health, exige mTLS e confiança previamente persistida.
  * @param limits Limites das rotas; omitidos, utiliza os padrões documentados.
+ * @returns Aplicação Express com rotas e tratamento de erros registrados.
  */
 export function createApp(limits: Readonly<ApiLimits> = defaultLimits): Express {
   const configured: ApiLimits = {
@@ -131,6 +141,7 @@ interface BackendOptions extends ApiLimits {
  * Opções legadas sem integração segura com o model são recusadas explicitamente.
  * @param argv Argumentos da aplicação, sem nome do executável ou do arquivo.
  * @param env Variáveis do ambiente local.
+ * @returns Opções validadas para inicializar o backend.
  */
 function backendOptions(argv: string[], env: NodeJS.ProcessEnv): BackendOptions {
   const names = ["root", "state-dir", "staging-dir", "host", "port", "json-max-bytes", "zip-max-entries", "zip-max-bytes", "shutdown-timeout-ms",
@@ -146,6 +157,7 @@ function backendOptions(argv: string[], env: NodeJS.ProcessEnv): BackendOptions 
   }
   /** Relaciona o nome público da opção à variável de ambiente documentada.
    * @param name Nome da opção sem os hífens iniciais.
+   * @returns Nome da variável de ambiente com o prefixo PASSA_.
    */
   const environmentName = (name: string): string => `PASSA_${name.replaceAll("-", "_").toUpperCase()}`;
   const accepted = new Set(names.map(environmentName));
@@ -155,6 +167,7 @@ function backendOptions(argv: string[], env: NodeJS.ProcessEnv): BackendOptions 
   /** Obtém o valor escolhido sem substituir valores vazios por padrões.
    * @param name Nome público da opção.
    * @param fallback Padrão documentado, quando houver.
+   * @returns Valor de argumento, ambiente ou padrão, nessa prioridade.
    */
   const value = (name: string, fallback?: string): string => {
     const chosen = parsed.values[name] ?? env[environmentName(name)] ?? fallback;
@@ -165,6 +178,7 @@ function backendOptions(argv: string[], env: NodeJS.ProcessEnv): BackendOptions 
    * @param name Nome público da opção.
    * @param fallback Valor padrão documentado.
    * @param maximum Maior valor aceito.
+   * @returns Inteiro positivo validado dentro do limite informado.
    */
   const integer = (name: string, fallback: number, maximum = Number.MAX_SAFE_INTEGER): number => {
     const text = value(name, String(fallback));
@@ -177,6 +191,7 @@ function backendOptions(argv: string[], env: NodeJS.ProcessEnv): BackendOptions 
   /** Confere um caminho absoluto nativo sem alterar espaços dos nomes.
    * @param name Nome público da opção.
    * @param fallback Caminho padrão quando a opção for omitida.
+   * @returns Caminho absoluto nativo normalizado.
    */
   const absolute = (name: string, fallback?: string): string => {
     const text = value(name, fallback);

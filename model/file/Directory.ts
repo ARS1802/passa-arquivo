@@ -1,3 +1,10 @@
+/**
+ * Responsabilidade: Representar diretórios, conferir os limites de acesso ao disco e
+ * executar operações sobre pastas.
+ *
+ * Exemplo prático: Ao listar documentos, Directory recusa links e devolve as subpastas antes
+ * dos arquivos, sem permitir sair da raiz.
+ */
 import { type Stats } from "node:fs";
 import { chmod, lstat, mkdir, mkdtemp, readdir, realpath, rename, rmdir } from "node:fs/promises";
 import { isUtf8 } from "node:buffer";
@@ -16,6 +23,7 @@ export interface DirectoryBoundaries {
 /** Confere contenção por componentes, inclusive a igualdade.
  * @param parent Caminho absoluto do possível ancestral.
  * @param candidate Caminho absoluto a comparar.
+ * @returns true quando candidate é igual a parent ou está dentro dele.
  */
 export function containsPath(parent: string, candidate: string): boolean {
   const relative = path.relative(parent, candidate);
@@ -24,6 +32,7 @@ export function containsPath(parent: string, candidate: string): boolean {
 
 /** Resolve a parte existente de uma configuração, permitindo diretórios privados ainda ausentes.
  * @param value Caminho absoluto nativo, sem expansão de variáveis.
+ * @returns Caminho absoluto com os componentes existentes resolvidos no disco.
  */
 export async function configuredPath(value: string): Promise<string> {
   if (typeof value !== "string" || !path.isAbsolute(value) || value.includes("\0")) {
@@ -90,6 +99,7 @@ export class Directory {
   /** Abre uma raiz existente e recusa sobreposição com estado, staging e repositório.
    * @param rootPath Caminho absoluto escolhido pelo usuário.
    * @param boundaries Caminhos absolutos das áreas que não podem ser compartilhadas.
+   * @returns Raiz validada para acesso aos arquivos compartilhados.
    */
   static async open(rootPath: string, boundaries: DirectoryBoundaries): Promise<Directory> {
     const root = await configuredPath(rootPath);
@@ -110,6 +120,7 @@ export class Directory {
    * @param excludedPaths Áreas que não podem conter nem estar contidas neste armazenamento.
    * @param repositoryDir Quando informado, permite apenas model/peer e tmp dentro do repositório,
    * preparando esses dois diretórios com permissão 0700. Outros locais existentes mantêm suas permissões.
+   * @returns Diretório privado com separação e permissões conferidas.
    */
   static async openPrivate(rootPath: string, excludedPaths: readonly string[], repositoryDir?: string): Promise<Directory> {
     if (process.platform === "win32") throw modelError("private_storage_unavailable", "A proteção por ACL ainda não foi definida para Windows.");
@@ -143,7 +154,9 @@ export class Directory {
     return new Directory(root, stats, ".", true);
   }
 
-  /** Cria uma área temporária exclusiva, somente sob armazenamento privado. */
+  /** Cria uma área temporária exclusiva, somente sob armazenamento privado.
+   * @returns Diretório exclusivo cuja limpeza cabe à operação que o criou.
+   */
   async temporary(): Promise<Directory> {
     if (!this.#privateStorage) throw modelError("entry_forbidden", "Temporários exigem armazenamento privado.");
     const { absolutePath } = await this.inspect(this.path, "directory");
@@ -154,6 +167,7 @@ export class Directory {
 
   /** Representa um arquivo, inclusive um destino ainda ausente.
    * @param relativePath Caminho completo relativo à raiz deste objeto.
+   * @returns Arquivo encapsulado; o destino ainda pode estar ausente.
    */
   file(relativePath: string): File {
     validatePath(relativePath);
@@ -161,12 +175,15 @@ export class Directory {
     return new File(this, relativePath);
   }
 
-  /** Caminho relativo da pasta representada. */
+  /** Caminho relativo da pasta representada.
+   * @returns Caminho da pasta relativo à raiz.
+   */
   get path(): string { return this.#path; }
 
   /** Lê nomes de filhos sem abrir seu conteúdo nem conferir permissões individuais.
    * @internal O registro de peers filtra seus dados para não inspecionar arquivos de código.
    * Para listar entradas compartilhadas, use list, que valida cada filho.
+   * @returns Nomes UTF-8 dos filhos imediatos, sem ler seu conteúdo.
    */
   async childNames(): Promise<string[]> {
     const { absolutePath } = await this.inspect(this.path, "directory");
@@ -196,6 +213,7 @@ export class Directory {
    * @internal Usado pelos objetos File e Directory; não produz dados para a GUI.
    * @param relativePath Caminho relativo à raiz.
    * @param expected Tipo exigido, quando aplicável.
+   * @returns Caminho absoluto e metadados internos após conferir cada componente.
    */
   async inspect(relativePath: string, expected?: "file" | "directory"): Promise<{ absolutePath: string; stats: Stats }> {
     validatePath(relativePath);
@@ -235,13 +253,16 @@ export class Directory {
 
   /** Localiza uma entrada e devolve sua representação encapsulada.
    * @param relativePath Caminho relativo à raiz, mesmo quando este objeto representa uma subpasta.
+   * @returns Arquivo ou diretório encapsulado de acordo com o tipo encontrado.
    */
   async entry(relativePath: string): Promise<File | Directory> {
     const { stats } = await this.inspect(relativePath);
     return stats.isDirectory() ? new Directory(this.#rootPath, this.#rootStats, relativePath, this.#privateStorage) : new File(this, relativePath);
   }
 
-  /** Consulta metadados da pasta sem calcular seu tamanho recursivo. */
+  /** Consulta metadados da pasta sem calcular seu tamanho recursivo.
+   * @returns Metadados da pasta, com tamanho null.
+   */
   async metadata(): Promise<EntryMetadata> {
     const { stats } = await this.inspect(this.path, "directory");
     return { name: this.path.split("/").at(-1)!, path: this.path, type: "directory", size: null, modifiedAt: stats.mtime.toISOString() };
@@ -249,14 +270,25 @@ export class Directory {
 
   /** Lista filhos imediatos, com pastas primeiro e nomes ordenados pelos bytes UTF-8.
    * Um link ou entrada especial faz a listagem inteira falhar.
+   * @returns Filhos validados, com pastas primeiro e nomes em ordem de bytes UTF-8.
    */
   async list(): Promise<Array<File | Directory>> {
     const entries: Array<File | Directory> = [];
     for (const name of await this.childNames()) {
       entries.push(await this.entry(this.path === "." ? name : `${this.path}/${name}`));
     }
-    return entries.sort((a, b) => Number(b instanceof Directory) - Number(a instanceof Directory)
-      || Buffer.compare(Buffer.from(a.path.split("/").at(-1)!), Buffer.from(b.path.split("/").at(-1)!)));
+    /** Compara o tipo primeiro e depois o nome, sem depender do idioma do sistema.
+     * @param first Primeira entrada da comparação.
+     * @param second Segunda entrada da comparação.
+     * @returns Valor negativo, zero ou positivo conforme a ordem das duas entradas.
+     */
+    return entries.sort((first, second) => {
+      if (first instanceof Directory && !(second instanceof Directory)) return -1;
+      if (second instanceof Directory && !(first instanceof Directory)) return 1;
+      const firstName = first.path.split("/").at(-1)!;
+      const secondName = second.path.split("/").at(-1)!;
+      return Buffer.compare(Buffer.from(firstName), Buffer.from(secondName));
+    });
   }
 
   /** Cria uma pasta e pais ausentes, preservando pastas existentes e seu conteúdo.
@@ -292,6 +324,7 @@ export class Directory {
    * @param sourcePath Origem relativa à raiz.
    * @param targetPath Destino final relativo à mesma raiz.
    * @param overwrite Permite somente substituir arquivo regular por arquivo regular.
+   * @returns Entrada encapsulada no destino após a movimentação.
    */
   async relocate(sourcePath: string, targetPath: string, overwrite: boolean): Promise<File | Directory> {
     validatePath(targetPath);
@@ -324,6 +357,7 @@ export class Directory {
   /** Move esta pasta ou altera seu nome; o destino é relativo à raiz.
    * @param targetPath Caminho final completo.
    * @param overwrite Não autoriza substituir ou mesclar diretórios.
+   * @returns Entrada encapsulada no novo caminho.
    */
   async move(targetPath: string, overwrite = false): Promise<File | Directory> {
     return this.relocate(this.path, targetPath, overwrite);
@@ -418,7 +452,9 @@ export class Directory {
       else {
         const file = entry;
         zip.addReadStreamLazy(name, { mtime: new Date(metadata.modifiedAt) }, callback => {
-          /** Conta os bytes efetivamente lidos, inclusive se o arquivo mudar após os metadados. */
+          /** Conta os bytes efetivamente lidos, inclusive se o arquivo mudar após os metadados.
+           * @returns Blocos de bytes que serão compactados, sujeitos ao limite total do ZIP.
+           */
           async function* chunks(): AsyncGenerator<Buffer> {
             const source = await file.read();
             active.add(source);

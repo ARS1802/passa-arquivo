@@ -33,10 +33,10 @@ Foram conferidos:
 Esses resultados cobrem os ajustes da revisão, sem validar todo o model, todas
 as profundidades de árvore ou o funcionamento em Windows.
 
-O `npm test` atual é um placeholder que termina com erro. As seções abaixo que
-descrevem uma suíte de configuração, `.test-build`, `npm run check` e
-`npm run typecheck` não correspondem a verificações disponíveis nesta estrutura.
-Os cenários de cobertura futura continuam sendo referências para o QA.
+O `npm test` atual é um placeholder que termina com erro. Não há suíte de
+configuração em `.test-build` nem scripts `check` ou
+`typecheck` no manifesto atual. Os cenários de cobertura futura continuam
+sendo referências para o QA.
 
 Os testes deverão conferir as opções de configuração, o comportamento da API,
 as operações de arquivos, o pareamento e a comunicação entre GUI e controller.
@@ -44,6 +44,70 @@ A matriz de verificação deve incluir Linux Mint, Ubuntu e Windows, além das
 conexões HTTP protegidas por TLS entre peers.
 
 ## Executar as verificações
+
+### Revisão de legibilidade — 2026-11-02
+
+A revisão partiu do commit `5993a09`, com a árvore de trabalho limpa. O ambiente
+usado foi Node.js 26.10.0 e npm 11.19.1. As alterações preservaram os contratos
+públicos, os formatos de persistência e as verificações de segurança.
+
+| Verificação executada da raiz | Resultado |
+| --- | --- |
+| `npm run build:backend` | Passou na referência inicial e após as alterações; saída mantida em `dist` na raiz. |
+| `npm run build:gui` | Passou na referência inicial e após as alterações. |
+| `npm run lint:gui` | Passou na referência inicial e após as alterações. |
+| `node --input-type=module`, com verificadores pela entrada padrão | 60 verificações de model/HTTPS, 35 comparações com a versão anterior e 11 verificações adicionais de descoberta e falhas de pareamento passaram. |
+| `git diff --check` | Passou após a revisão final dos arquivos. |
+
+Os verificadores diretos não foram salvos como arquivos de teste. Usaram
+diretórios temporários exclusivos, removidos ao final, e pararam na primeira
+falha. A primeira tentativa do verificador de comparação teve um parêntese
+excedente e não chegou a executar testes. Depois da correção, a checagem passou;
+essa falha foi no verificador, sem demonstrar um defeito na aplicação.
+
+Foram conferidos:
+
+- Gravação com texto, bytes e fonte assíncrona; criação, sobrescrita, limite de
+  bytes e preservação do destino anterior em falha.
+- Cópia de arquivo e árvore, pasta vazia, ordenação por tipo e bytes UTF-8,
+  movimentação, conflito, cancelamento e recusa de caminhos externos e links.
+- CSV de peers com vírgulas, aspas e quebra de linha no apelido; preparação sem
+  confiança, descarte, atualização de conexão e recusa de certificado inválido.
+- As dez rotas de arquivos e saúde em HTTPS com TLS 1.3 e certificados
+  temporários: sucesso integrado ao model, parâmetros repetidos, codificação
+  inválida, entrada ausente, conflito e upload acima do limite. Clientes sem
+  certificado ou com certificado desconhecido foram recusados. A validação TLS
+  e a autenticação permaneceram ativas.
+- Mesmos resultados e códigos de erro para 35 entradas de query e destinos de
+  descoberta comparadas ao código do commit inicial. Na rede de loopback, foram
+  conferidos anúncio válido, resposta inválida ou excedida, timeout, destino
+  indisponível e cancelamento. Falhas de envio do pareamento não criaram confiança.
+
+Uma inspeção dos comentários encontrou documentação e parâmetros nas 159 funções
+e métodos nomeados dos arquivos TypeScript/JavaScript analisados; `App`, em JSX,
+foi conferido separadamente. Os arquivos JavaScript e CSS gerados pela GUI
+mantiveram os mesmos SHA-256 da referência inicial. Isso confirma que esses
+artefatos não mudaram; não substitui uma conferência visual no navegador.
+
+Não foram repetidos nesta revisão o pareamento completo entre computadores,
+os testes em Windows ou o uso visual da GUI. Os resultados não comprovam todas
+as combinações de concorrência, permissões, falhas de disco ou plataformas.
+`npm test` continua sendo um placeholder e não foi apresentado como suíte aprovada.
+
+### Roteiro manual essencial
+
+Execute os comandos na raiz. Os dois últimos passos dependem de uma instalação
+de teste com peer já pareado e de um cliente HTTPS que valide o certificado do
+servidor e apresente seu próprio certificado e chave. Não use dados reais para
+testar alterações de arquivos.
+
+| Comando ou procedimento | Resultado esperado |
+| --- | --- |
+| `npm run build:backend` | Compilação sem erros, com `dist/controller/api/app.js`. |
+| `npm run build:gui` e depois `npm run lint:gui` | Build e análise estática sem erros. |
+| `npm run dev:gui`; abrir o endereço mostrado e clicar no contador | Contador incrementa; imagens, links e estilos da tela inicial continuam presentes. Não há chamadas de arquivos ao backend. |
+| `npm run start:backend`; pelo cliente autenticado, consultar `GET /health` e `GET /api/v2/directories/entries?path=.` | Saúde e listagem retornam `200`, sem expor caminhos absolutos. |
+| Consultar `/health` sem certificado; depois, autenticado, consultar `/api/v2/entries?path=a&path=b` | A primeira conexão é recusada; a segunda retorna `422 validation_failed` antes de acessar o disco. |
 
 ### Descoberta temporária: verificações executadas
 
@@ -199,93 +263,6 @@ parciais; a seção atual acrescenta as mensagens reais e a persistência.
    pelos do ambiente de teste. Espere o mesmo certificado e autenticação do peer
    persistido; um certificado não pareado deve continuar recusado.
 
-### Referência anterior de configuração
-
-Na raiz do projeto, use Node.js **24.19.0** e npm **11.17.0**. Se usa nvm e essa
-versão está instalada, selecione-a com `nvm use`.
-Depois:
-
-```sh
-npm ci
-npm run check
-```
-
-`npm ci` instala as dependências nas versões salvas no lock. Não é necessário
-reinstalá-las a cada execução dos testes. `npm run check` confere os tipos, compila
-o projeto e executa a suíte, nessa ordem.
-
-Para executar somente uma dessas verificações:
-
-```sh
-npm run typecheck
-npm run build
-npm test
-```
-
-| Comando | O que verifica | Arquivos gerados |
-| --- | --- | --- |
-| `npm run typecheck` | Tipos do código de produção e dos testes. | Nenhum. |
-| `npm run build` | Compilação dos arquivos TypeScript do projeto. | JavaScript e mapas de origem. |
-| `npm test` | Compilação do código e dos testes, seguida da execução com `node --test`. | Arquivos em `.test-build/`. |
-
-Arquivos gerados e dependências instaladas não são pastas de arquivos
-compartilhados. Os comandos e suas definições ficam no manifesto do projeto.
-
-## O que os testes atuais cobrem
-
-### Valores de configuração
-
-Os testes de configuração chamam `loadConfig` com argumentos
-e variáveis de ambiente preparados para cada caso. Nenhum desses caminhos é
-aberto no disco. O arquivo verifica:
-
-- As três pastas obrigatórias, os valores padrão e as 16 opções por argumentos
-  e variáveis de ambiente.
-- A preferência de argumentos sobre variáveis e padrões, inclusive quando o
-  valor substituído está inválido, e a substituição de listas inteiras.
-- Argumentos desconhecidos, repetidos ou sem valor; variáveis `PASSA_`
-  desconhecidas; números e listas JSON em formatos inválidos.
-- Os menores e maiores valores numéricos permitidos e a rejeição de valores fora
-  dos limites.
-- Caminhos absolutos, simplificação de `.` e `..`, preservação de espaços e
-  separação entre as pastas e os caminhos de certificado, chave e tokens.
-- Os modos de certificado, os nomes e IPs do servidor, as identidades SAN e as
-  origens CORS.
-- A proteção do objeto de configuração e de suas listas contra alteração, sem
-  modificar os dados recebidos.
-- Mensagens de erro sem expor os valores privados usados nos testes.
-
-### Comando de terminal e aplicação
-
-Os testes de inicialização iniciam processos separados
-para observar como o programa termina e o que escreve no terminal. Ele verifica:
-
-- Configuração aceita com saída `0`, sem criar as pastas informadas e com mensagem
-  clara de que não houve leitura de arquivos nem início de servidor.
-- Configuração inválida com saída `2`, sem repetir valores privados ou caminhos.
-- Opção desconhecida rejeitada sem publicar o nome ou o valor recebido.
-- Importação da configuração e criação da aplicação Express sem abrir uma porta
-  ou manter o processo ativo.
-
-O teste de criação de pastas usa uma pasta temporária exclusiva e a remove ao
-terminar. Os demais caminhos são somente textos de configuração. Nenhum teste
-usa a pasta real de arquivos de quem executa o projeto ou gera tokens e
-certificados de produção.
-
-## O que esses testes não comprovam
-
-Aceitar um caminho não prova que ele existe, pode ser acessado, pertence ao usuário
-correto ou está separado fisicamente de outro caminho. Os testes atuais não
-verificam permissões, links simbólicos, discos ou a localização real do repositório.
-
-Da mesma forma, conferir um nome ou IP em `tls-sans` não testa uma conexão HTTP.
-Não há testes de certificados reais, confiança bilateral, mTLS, pareamento
-ou transferências. O caminho de saída `1` da CLI para uma falha inesperada existe
-no código, mas não tem um teste que provoque essa falha.
-
-`npm test` executa apenas os arquivos de teste existentes. Um resultado sem falhas
-não significa que toda a API esteja pronta.
-
 ## Conferir alterações na documentação
 
 A revisão de um guia deve confirmar que os caminhos de arquivos, links, nomes de
@@ -309,10 +286,11 @@ Ao revisar uma rota, compare seus parâmetros, respostas e exemplos com o códig
 os testes correspondentes. Quando a funcionalidade ainda não existir, o guia deve
 dizer isso de forma direta.
 
-## Cobertura necessária para as funcionalidades que faltam
+## Cobertura necessária
 
-Os casos abaixo ainda não têm testes implementados. Eles descrevem resultados
-que precisarão ser conferidos junto das funcionalidades correspondentes.
+Os casos abaixo orientam uma futura suíte automatizada. Alguns já foram
+conferidos diretamente nas execuções registradas acima; isso não substitui
+verificações repetíveis de todos os cenários e plataformas.
 
 ### Acesso e caminhos
 

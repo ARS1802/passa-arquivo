@@ -1,3 +1,10 @@
+/**
+ * Responsabilidade: Validar dados HTTP, enviar streams e traduzir erros para respostas
+ * seguras compartilhadas pelas rotas.
+ *
+ * Exemplo prático: Se uma consulta repetir path, query recusa a entrada e handleError
+ * responde validation_failed sem revelar caminhos locais.
+ */
 import express, { type NextFunction, type Request, type Response } from "express";
 import { isUtf8 } from "node:buffer";
 import { once } from "node:events";
@@ -34,11 +41,13 @@ const problems = {
 /** Lê a query uma única vez e recusa parâmetros desconhecidos, estruturados ou repetidos.
  * @param request Requisição recebida pelo Express.
  * @param allowed Nomes dos parâmetros aceitos pela rota.
+ * @returns Parâmetros decodificados uma única vez, sem nomes repetidos.
  */
 export function query(request: Request, allowed: readonly string[]): Record<string, string> {
   const result: Record<string, string> = Object.create(null);
-  const raw = request.originalUrl.split("?").slice(1).join("?");
-  for (const part of raw.split("&")) {
+  const queryStart = request.originalUrl.indexOf("?");
+  const rawQuery = queryStart < 0 ? "" : request.originalUrl.slice(queryStart + 1);
+  for (const part of rawQuery.split("&")) {
     if (!part) continue;
     const separator = part.indexOf("=");
     let name: string;
@@ -57,6 +66,7 @@ export function query(request: Request, allowed: readonly string[]): Record<stri
 
 /** Obtém um campo textual sem converter tipos ou corrigir seu conteúdo.
  * @param value Valor do campo, já decodificado quando veio da query.
+ * @returns Texto recebido, preservando espaços e conteúdo.
  */
 export function stringField(value: unknown): string {
   if (typeof value !== "string") throw modelError("validation_failed", "Informe o campo textual obrigatório.");
@@ -65,6 +75,7 @@ export function stringField(value: unknown): string {
 
 /** Obtém overwrite com padrão somente quando omitido.
  * @param value Valor JSON do campo.
+ * @returns Booleano informado, ou false quando o campo foi omitido.
  */
 export function overwriteField(value: unknown): boolean {
   if (value === undefined) return false;
@@ -94,13 +105,23 @@ export async function noBody(request: Request): Promise<void> {
  * @param response Resposta usada pelo middleware nativo do Express.
  * @param maximum Limite configurado de bytes do JSON.
  * @param fields Campos aceitos nesta operação.
+ * @returns Objeto JSON validado, contendo somente campos permitidos.
  */
 export async function jsonObject(request: Request, response: Response, maximum: number, fields: readonly string[]): Promise<Record<string, unknown>> {
   if (!/^application\/json(?:\s*;\s*charset\s*=\s*(?:utf-8|"utf-8"))?\s*$/i.test(request.get("content-type") ?? "")) {
     throw modelError("unsupported_media_type", "Esta operação exige application/json em UTF-8.");
   }
   const parse = express.json({
-    limit: maximum, strict: false, inflate: false, type: () => true,
+    limit: maximum, strict: false, inflate: false,
+    /** Seleciona o parser após a validação explícita de Content-Type desta função.
+     * @returns true, pois o tipo de conteúdo já foi conferido.
+     */
+    type: () => true,
+    /** Recusa conteúdo vazio ou bytes que não representem texto UTF-8 válido.
+     * @param _request Requisição recebida pelo parser do Express.
+     * @param _response Resposta associada; não é enviada por esta verificação.
+     * @param bytes Corpo bruto, antes de interpretar o JSON.
+     */
     verify(_request, _response, bytes) {
       if (!bytes.length || !isUtf8(bytes)) throw modelError("malformed_request", "Informe um JSON válido em UTF-8.");
     },
@@ -124,6 +145,7 @@ export async function jsonObject(request: Request, response: Response, maximum: 
 
 /** Constrói Location sem revelar caminhos absolutos.
  * @param path Caminho relativo retornado pelo model.
+ * @returns URL relativa de consulta dos metadados da entrada.
  */
 export function metadataLocation(path: string): string {
   return `/api/v2/entries?${new URLSearchParams({ path })}`;

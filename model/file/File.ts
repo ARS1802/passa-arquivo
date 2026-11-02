@@ -1,3 +1,10 @@
+/**
+ * Responsabilidade: Encapsular leitura, gravação, cópia e remoção de arquivos regulares
+ * dentro dos limites conferidos por Directory.
+ *
+ * Exemplo prático: Ao enviar nota.txt, File prepara os bytes no staging e só publica o
+ * arquivo depois de validar toda a gravação.
+ */
 import { constants, type ReadStream } from "node:fs";
 import { link, open, rename, unlink } from "node:fs/promises";
 import path from "node:path";
@@ -19,6 +26,7 @@ export type FileContent = string | Uint8Array | AsyncIterable<Uint8Array>;
 /** Cria um erro do model, sem associá-lo a uma resposta HTTP.
  * @param code Código que permite ao controller identificar a falha.
  * @param message Explicação sem caminhos locais ou credenciais.
+ * @returns Erro com código estável para tratamento pelo controller.
  */
 export function modelError(code: string, message: string): Error & { code: string } {
   return Object.assign(new Error(message), { code });
@@ -26,6 +34,7 @@ export function modelError(code: string, message: string): Error & { code: strin
 
 /** Obtém o código de um erro operacional sem pressupor seu tipo.
  * @param error Erro recebido de uma operação.
+ * @returns Código textual disponível no erro, ou undefined quando ele não existe.
  */
 export function errorCode(error: unknown): string | undefined {
   return error !== null && typeof error === "object" && "code" in error
@@ -46,10 +55,14 @@ export class File {
     this.#path = path;
   }
 
-  /** Caminho relativo à raiz, sem revelar a localização no computador. */
+  /** Caminho relativo à raiz, sem revelar a localização no computador.
+   * @returns Caminho do arquivo relativo à raiz.
+   */
   get path(): string { return this.#path; }
 
-  /** Consulta os metadados atuais; recusa diretórios e entradas proibidas. */
+  /** Consulta os metadados atuais; recusa diretórios e entradas proibidas.
+   * @returns Nome, caminho, tamanho e data de modificação do arquivo.
+   */
   async metadata(): Promise<EntryMetadata> {
     const { stats } = await this.#directory.inspect(this.path, "file");
     return {
@@ -60,6 +73,7 @@ export class File {
 
   /** Abre uma leitura por partes; quem consome deve concluir ou destruir o stream.
    * Não impõe bloqueio exclusivo nem promete uma versão fixa durante edições.
+   * @returns Stream de leitura que o consumidor deve concluir ou destruir.
    */
   async read(): Promise<ReadStream> {
     const { absolutePath, stats } = await this.#directory.inspect(this.path, "file");
@@ -95,7 +109,9 @@ export class File {
     if (typeof overwrite !== "boolean" || !Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
       throw modelError("validation_failed", "Informe sobrescrita e limite de bytes válidos.");
     }
-    /** Confere o destino atual; somente ausência permite continuar como criação. */
+    /** Confere o destino atual; somente ausência permite continuar como criação.
+     * @returns true para arquivo regular existente; false somente quando o destino está ausente.
+     */
     const destinationExists = async (): Promise<boolean> => {
       try {
         await this.#directory.inspect(this.path, "file");
@@ -116,7 +132,10 @@ export class File {
       const handle = await open(prepared, "wx", 0o600);
       try {
         let total = 0;
-        const chunks = typeof content === "string" ? [Buffer.from(content)] : content instanceof Uint8Array ? [content] : content;
+        let chunks: Iterable<Uint8Array> | AsyncIterable<Uint8Array>;
+        if (typeof content === "string") chunks = [Buffer.from(content)];
+        else if (content instanceof Uint8Array) chunks = [content];
+        else chunks = content;
         for await (const chunk of chunks) {
           signal?.throwIfAborted();
           if (!(chunk instanceof Uint8Array)) throw modelError("validation_failed", "O conteúdo precisa fornecer bytes.");
@@ -166,6 +185,7 @@ export class File {
    * @param staging Área privada de preparação.
    * @param overwrite Autoriza substituir arquivo regular.
    * @param signal Cancela a leitura e impede publicar uma cópia ainda em preparação.
+   * @returns Indicação de criação ou substituição do arquivo de destino.
    */
   async copy(target: File, staging: Directory, overwrite = false, signal?: AbortSignal): Promise<{ created: boolean }> {
     signal?.throwIfAborted();
@@ -185,6 +205,7 @@ export class File {
   /** Move ou renomeia o arquivo sob sua raiz.
    * @param targetPath Caminho final completo relativo à raiz.
    * @param overwrite Autoriza substituir outro arquivo regular.
+   * @returns Representação encapsulada da entrada no novo caminho.
    */
   async move(targetPath: string, overwrite = false): Promise<File | Directory> {
     return this.#directory.relocate(this.path, targetPath, overwrite);

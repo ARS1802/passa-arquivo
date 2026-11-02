@@ -1,3 +1,10 @@
+/**
+ * Responsabilidade: Definir a aparência dos elementos da tela inicial de App, incluindo os
+ * ajustes para telas menores.
+ *
+ * Exemplo prático: As regras posicionam as imagens da abertura e adaptam as seções de links
+ * conforme a largura da janela.
+ */
 .counter {
   font-size: 16px;
   padding: 5px 10px;

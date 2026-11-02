@@ -1,3 +1,10 @@
+/**
+ * Responsabilidade: Oferecer as operações do model sobre a raiz compartilhada usando File e
+ * Directory.
+ *
+ * Exemplo prático: Ao copiar documentos/nota.txt, o controller chama copy e recebe os
+ * metadados do destino após a publicação da cópia.
+ */
 import { Directory, type DirectoryBoundaries } from "./Directory.js";
 import { File, modelError, type EntryMetadata, type FileContent } from "./File.js";
 import path from "node:path";
@@ -16,7 +23,9 @@ export async function setSharedDirectory(rootPath: string, boundaries: Directory
   selectedPaths = { ...boundaries, rootPath };
 }
 
-/** Recupera a raiz selecionada ou informa que a configuração ainda não foi feita. */
+/** Recupera a raiz selecionada ou informa que a configuração ainda não foi feita.
+ * @returns Raiz compartilhada atualmente selecionada.
+ */
 function selectedDirectory(): Directory {
   if (!sharedDirectory) throw modelError("configuration_required", "Selecione a pasta compartilhada antes da operação.");
   return sharedDirectory;
@@ -24,13 +33,16 @@ function selectedDirectory(): Directory {
 
 /** Consulta os metadados atuais de uma entrada.
  * @param path Caminho relativo à raiz selecionada.
+ * @returns Metadados públicos da entrada encontrada.
  */
 export async function metadata(path: string): Promise<EntryMetadata> {
-  return (await selectedDirectory().entry(path)).metadata();
+  const entry = await selectedDirectory().entry(path);
+  return entry.metadata();
 }
 
 /** Lista apenas os filhos imediatos de uma pasta.
  * @param path Caminho relativo; ponto seleciona a raiz.
+ * @returns Caminho consultado e metadados dos filhos imediatos.
  */
 export async function list(path = "."): Promise<{ path: string; entries: EntryMetadata[] }> {
   const directory = await selectedDirectory().entry(path);
@@ -42,6 +54,7 @@ export async function list(path = "."): Promise<{ path: string; entries: EntryMe
 
 /** Abre o conteúdo de um arquivo para leitura por partes, sem realizar transferência de rede.
  * @param path Caminho relativo de um arquivo regular.
+ * @returns Stream de leitura que o controller deve consumir ou destruir.
  */
 export async function read(path: string) {
   const file = await selectedDirectory().entry(path);
@@ -51,6 +64,7 @@ export async function read(path: string) {
 
 /** Cria uma pasta e seus pais; uma pasta existente mantém seu conteúdo.
  * @param path Caminho relativo do destino.
+ * @returns Metadados da pasta e indicação de criação do destino final.
  */
 export async function createDirectory(path: string): Promise<{ entry: EntryMetadata; created: boolean }> {
   const result = await selectedDirectory().create(path);
@@ -61,11 +75,13 @@ export async function createDirectory(path: string): Promise<{ entry: EntryMetad
  * @param path Caminho relativo da entrada a excluir.
  */
 export async function remove(path: string): Promise<void> {
-  await (await selectedDirectory().entry(path)).remove();
+  const entry = await selectedDirectory().entry(path);
+  await entry.remove();
 }
 
 /** Prepara staging por meio de Directory, sem acesso direto ao disco pelo serviço.
  * @param paths Configuração capturada no início da operação.
+ * @returns Diretório privado usado para preparar a operação.
  */
 async function prepareStaging(paths: DirectoryBoundaries & { rootPath: string }): Promise<Directory> {
   return Directory.openPrivate(paths.stagingDir, [paths.rootPath, paths.stateDir], paths.repositoryDir);
@@ -76,6 +92,7 @@ async function prepareStaging(paths: DirectoryBoundaries & { rootPath: string })
  * @param content Bytes fornecidos pelo controller após a validação do transporte.
  * @param maxBytes Limite de bytes, aplicado durante a leitura.
  * @param signal Cancelamento solicitado pelo chamador antes da publicação.
+ * @returns Metadados do arquivo publicado e indicação de criação ou substituição.
  */
 export async function write(targetPath: string, content: FileContent, maxBytes = 1_073_741_824, signal?: AbortSignal): Promise<{ entry: EntryMetadata; created: boolean }> {
   signal?.throwIfAborted();
@@ -89,6 +106,7 @@ export async function write(targetPath: string, content: FileContent, maxBytes =
 /** Move e/ou renomeia uma entrada, mantendo os campos omitidos.
  * @param sourcePath Caminho atual relativo à raiz.
  * @param changes Nome e/ou pasta pai; overwrite autoriza somente substituição de arquivo.
+ * @returns Metadados da entrada após mover ou renomear.
  */
 export async function move(sourcePath: string, changes: { name?: string; parentPath?: string; overwrite?: boolean }): Promise<EntryMetadata> {
   const root = selectedDirectory();
@@ -107,7 +125,8 @@ export async function move(sourcePath: string, changes: { name?: string; parentP
   if (!(parent instanceof Directory)) throw modelError("entry_conflict", "O pai de destino precisa ser uma pasta.");
   const source = await root.entry(sourcePath);
   const targetPath = path.posix.join(parentPath, name);
-  return (await source.move(targetPath, changes.overwrite ?? false)).metadata();
+  const destination = await source.move(targetPath, changes.overwrite ?? false);
+  return destination.metadata();
 }
 
 /** Copia um arquivo ou árvore para um destino completo, sem criar pais nem mesclar pastas.
@@ -127,13 +146,15 @@ export async function copy(sourcePath: string, targetPath: string, overwrite = f
   const result = source instanceof Directory
     ? await source.copy(targetPath, staging, signal)
     : await source.copy(root.file(targetPath), staging, overwrite, signal);
-  return { entry: await (await root.entry(targetPath)).metadata(), created: result.created };
+  const destination = await root.entry(targetPath);
+  return { entry: await destination.metadata(), created: result.created };
 }
 
 /** Abre um ZIP da pasta, sem HTTP e sem salvá-lo como resultado permanente.
  * @param path Caminho relativo da pasta; ponto seleciona a raiz.
  * @param maxEntries Limite de entradas descendentes.
  * @param maxBytes Limite de bytes antes da compressão.
+ * @returns Stream ZIP que o controller deve consumir ou destruir.
  */
 export async function archive(path = ".", maxEntries = 10_000, maxBytes = 10_737_418_240) {
   const directory = await selectedDirectory().entry(path);

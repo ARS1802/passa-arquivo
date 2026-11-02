@@ -1,3 +1,10 @@
+/**
+ * Responsabilidade: Abrir e encerrar a entrada temporária de descoberta e receber mensagens
+ * de pareamento.
+ *
+ * Exemplo prático: Uma ação local abre a porta 8444 por 120 segundos para receber um pedido;
+ * essa entrada não oferece acesso aos arquivos.
+ */
 import express from "express";
 import { constants } from "node:crypto";
 import { createServer, type Server } from "node:https";
@@ -66,11 +73,19 @@ export async function openDiscovery(options: DiscoveryOptions): Promise<{ expire
         next();
       } catch { socket.destroy(); }
     });
+    /** Devolve o anúncio público somente durante a janela de descoberta.
+     * @param request Requisição validada pelo controle de acesso deste listener.
+     * @param response Resposta enviada depois de concluir a operação.
+     */
     app.get("/connect", async (request, response) => {
       query(request, []);
       await noBody(request);
       response.json(announcement);
     });
+    /** Cria o pedido recebido usando certificado e IP extraídos do socket TLS.
+     * @param request Requisição validada pelo controle de acesso deste listener.
+     * @param response Resposta enviada depois de concluir a operação.
+     */
     app.post("/connect/requests", async (request, response) => {
       query(request, []);
       const body = await jsonObject(request, response, discoveryLimits.responseBytes, ["id", "displayName", "ttlMs"]);
@@ -83,18 +98,34 @@ export async function openDiscovery(options: DiscoveryOptions): Promise<{ expire
       const session = await receivePairingRequest({ ipAddress, displayName: body.displayName, certificatePem }, body.id, body.ttlMs);
       response.status(201).set("Location", `/connect/requests/${session.id}`).json(pairingMessage(session.id, certificatePem));
     });
+    /** Consulta o estado mínimo de uma sessão vinculada ao certificado do remetente.
+     * @param request Requisição validada pelo controle de acesso deste listener.
+     * @param response Resposta enviada depois de concluir a operação.
+     */
     app.get("/connect/requests/:id", async (request, response) => {
       query(request, []); await noBody(request);
       response.json(pairingMessage(request.params.id!, (request.socket as TLSSocket).getPeerX509Certificate()!.toString()));
     });
+    /** Prepara o registro da sessão sem substituir o aceite local.
+     * @param request Requisição validada pelo controle de acesso deste listener.
+     * @param response Resposta enviada depois de concluir a operação.
+     */
     app.post("/connect/requests/:id/preparation", async (request, response) => {
       query(request, []); await jsonObject(request, response, discoveryLimits.responseBytes, []);
       response.json(await prepareReceivedPairing(request.params.id!, (request.socket as TLSSocket).getPeerX509Certificate()!.toString()));
     });
+    /** Confirma a sessão preparada antes de responder ao iniciador.
+     * @param request Requisição validada pelo controle de acesso deste listener.
+     * @param response Resposta enviada depois de concluir a operação.
+     */
     app.post("/connect/requests/:id/confirmation", async (request, response) => {
       query(request, []); await jsonObject(request, response, discoveryLimits.responseBytes, []);
       response.json(await confirmReceivedPairing(request.params.id!, (request.socket as TLSSocket).getPeerX509Certificate()!.toString()));
     });
+    /** Encerra a própria sessão do participante conforme o motivo informado.
+     * @param request Requisição validada pelo controle de acesso deste listener.
+     * @param response Resposta enviada depois de concluir a operação.
+     */
     app.delete("/connect/requests/:id", async (request, response) => {
       query(request, []);
       const body = await jsonObject(request, response, discoveryLimits.responseBytes, ["reason"]);

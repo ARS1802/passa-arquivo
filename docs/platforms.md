@@ -13,8 +13,9 @@ Na API, um caminho será sempre relativo à pasta compartilhada e usará `/`:
 
 No disco, os caminhos seguem o sistema local. A pasta compartilhada poderá ser
 `/home/ana/Compartilhado` no Linux ou `C:\Users\Ana\Compartilhado` no Windows.
-Esses são exemplos do desenho futuro; o comando atual ainda não aceita caminhos
-de unidade Windows.
+Esses são exemplos de caminhos nativos de cada sistema. O controller usa as
+regras de caminho absoluto do ambiente em que executa; isso não significa que
+o armazenamento privado no Windows já funcione.
 
 O servidor deverá conferir cada segmento antes de convertê-lo para o caminho
 local. Receber uma URL com `/` não torna seguro concatená-la à raiz. Caminhos
@@ -40,7 +41,9 @@ devem ser escondidas por alterações automáticas no nome escolhido.
 ## Dados privados
 
 Chave privada, certificados conhecidos, registros de peers e arquivos temporários
-ficarão fora da pasta compartilhada e do repositório.
+ficam fora da pasta compartilhada. Os padrões são `model/peer` e `tmp`, duas áreas
+privadas permitidas dentro do repositório; seus dados de execução são ignorados
+pelo Git. Também podem ser configuradas áreas privadas fora do repositório.
 
 No Linux, permissões como `0600` para arquivos e `0700` para pastas podem limitar
 o acesso ao dono. No Windows, essa proteção exige listas de controle de acesso
@@ -48,8 +51,9 @@ o acesso ao dono. No Windows, essa proteção exige listas de controle de acesso
 Node.js tem limitações específicas de permissões no Windows.
 [Documentação de arquivos do Node.js](https://nodejs.org/api/fs.html#fschmodpath-mode-callback).
 
-O local de armazenamento privado e sua proteção ainda serão definidos para cada
-sistema. A instalação deverá preparar apenas os próprios dados, sem alterar
+O model confere dono e permissões POSIX. No Windows, a abertura da área privada
+é recusada enquanto as ACLs não estiverem implementadas. A instalação deverá
+preparar apenas os próprios dados, sem alterar
 firewall, permissões de outras pastas ou certificados confiáveis do sistema.
 
 ## Rede e encerramento

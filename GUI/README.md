@@ -1,16 +1,24 @@
-# React + Vite
+# GUI do passa-arquivo
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+A GUI usa JavaScript, React e Vite. Atualmente, exibe a tela inicial do Vite,
+com links e um contador.
+Ainda não há telas de arquivos, descoberta ou pareamento.
 
-Currently, two official plugins are available:
+- `src/App.jsx`: componente da tela inicial e estado local do contador.
+- `src/main.jsx`: montagem do React no elemento `root` de `index.html`.
+- `src/App.css` e `src/index.css`: estilos do componente e da página.
+- `api.js`: local previsto para a comunicação com o controller; só contém comentários.
+- `vite.config.js`: configuração do Vite com o plugin React.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Execute a partir da raiz do repositório:
 
-## React Compiler
+| Comando | Resultado |
+| --- | --- |
+| `npm run dev:gui` | Inicia o servidor de desenvolvimento; abra o endereço mostrado no terminal. |
+| `npm run build:gui` | Gera o build em `GUI/dist`. |
+| `npm run preview:gui` | Serve o build já gerado para conferência local. |
+| `npm run lint:gui` | Executa as regras de análise estática configuradas no Oxlint. |
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+O backend possui comandos separados e exige mTLS para peers conhecidos.
+Iniciá-lo não conecta esta tela à API. A arquitetura e os limites dessa
+integração estão em [Arquitetura](../docs/architecture.md).

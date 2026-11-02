@@ -1,3 +1,10 @@
+/**
+ * Responsabilidade: Manter a identidade local e os registros privados de peers, distinguindo
+ * preparações de confiança confirmada.
+ *
+ * Exemplo prático: Durante um pareamento, preparePeer grava uma pasta numerada; listPeers só
+ * inclui esse peer depois de confirmPeer.
+ */
 import forge from "node-forge";
 import { createPrivateKey, randomBytes, randomUUID, X509Certificate } from "node:crypto";
 import { isIP } from "node:net";
@@ -37,6 +44,7 @@ let pending: Promise<void> = Promise.resolve();
 
 /** Serializa operações para evitar perda de atualizações no CSV.
  * @param operation Operação que será executada depois da anterior.
+ * @returns Resultado da operação; uma falha não impede as próximas operações da fila.
  */
 function serialized<T>(operation: () => Promise<T>): Promise<T> {
   const result = pending.then(operation);
@@ -45,7 +53,9 @@ function serialized<T>(operation: () => Promise<T>): Promise<T> {
   return result;
 }
 
-/** Obtém a área privada já inicializada. */
+/** Obtém a área privada já inicializada.
+ * @returns Diretório privado selecionado na inicialização.
+ */
 function state(): Directory {
   if (!storage) throw modelError("configuration_required", "Inicialize o armazenamento de peers antes da operação.");
   return storage;
@@ -53,6 +63,7 @@ function state(): Directory {
 
 /** Lê um arquivo privado por meio de sua representação encapsulada.
  * @param file Arquivo a ler.
+ * @returns Conteúdo decodificado como UTF-8; bytes inválidos causam erro.
  */
 async function readText(file: File): Promise<string> {
   const chunks: Buffer[] = [];
@@ -64,6 +75,7 @@ async function readText(file: File): Promise<string> {
 /** Interpreta exatamente um certificado público PEM, sem aceitar chaves ou cadeias.
  * @param pem Certificado que identifica o peer.
  * @param requireCurrent Exige validade temporal para estabelecer ou usar confiança.
+ * @returns Certificado interpretado, com validade conferida quando exigida.
  */
 function certificate(pem: string, requireCurrent = false): X509Certificate {
   if (typeof pem !== "string" || !/^\s*-----BEGIN CERTIFICATE-----[\r\n]+[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE-----\s*$/.test(pem)) {
@@ -94,14 +106,20 @@ function validatePeerData(displayName: string, ipAddress: string): void {
 
 /** Codifica o índice CSV com cabeçalho fixo, aspas escapadas e finais de linha CRLF.
  * @param peers Registros que serão persistidos.
+ * @returns CSV completo com cabeçalho e campos entre aspas.
  */
 function encodeIndex(peers: readonly StoredPeer[]): string {
-  return [columns, ...peers.map(peer => columns.map(column => peer[column]))]
-    .map(row => row.map(value => `"${value.replaceAll('"', '""')}"`).join(",")).join("\r\n") + "\r\n";
+  const rows = [columns, ...peers.map(peer => columns.map(column => peer[column]))];
+  const lines = rows.map(row => {
+    const quotedFields = row.map(value => `"${value.replaceAll('"', '""')}"`);
+    return quotedFields.join(",");
+  });
+  return lines.join("\r\n") + "\r\n";
 }
 
 /** Lê CSV incluindo vírgulas, aspas e quebras de linha dentro de campos entre aspas.
  * @param source Conteúdo UTF-8 do índice; sintaxe inválida não é descartada silenciosamente.
+ * @returns Linhas e campos decodificados, sem descartar dados inválidos silenciosamente.
  */
 function parseIndex(source: string): string[][] {
   const rows: string[][] = [];
@@ -113,14 +131,22 @@ function parseIndex(source: string): string[][] {
     const char = source[index]!;
     if (quoted) {
       if (char === '"') {
-        if (source[index + 1] === '"') { field += '"'; index++; }
-        else { quoted = false; closed = true; }
+        if (source[index + 1] === '"') {
+          field += '"';
+          index++;
+        } else {
+          quoted = false;
+          closed = true;
+        }
       } else field += char;
     } else if (char === "," || char === "\n" || char === "\r") {
-      row.push(field); field = ""; closed = false;
+      row.push(field);
+      field = "";
+      closed = false;
       if (char !== ",") {
         if (char === "\r" && source[index + 1] === "\n") index++;
-        rows.push(row); row = [];
+        rows.push(row);
+        row = [];
       }
     } else if (char === '"' && field === "" && !closed) quoted = true;
     else {
@@ -135,6 +161,7 @@ function parseIndex(source: string): string[][] {
 
 /** Lê e confere o índice, os certificados e a correspondência entre linhas e pastas.
  * @param directory Raiz privada do estado local.
+ * @returns Registros internos, incluindo preparações ainda não confiáveis.
  */
 async function loadPeers(directory: Directory): Promise<StoredPeer[]> {
   const rows = parseIndex(await readText(directory.file("index.csv")));
@@ -189,6 +216,7 @@ async function saveIndex(directory: Directory, peers: readonly StoredPeer[]): Pr
 
 /** Carrega a identidade persistente e confere validade, assinatura e correspondência da chave.
  * @param directory Raiz privada do estado local.
+ * @returns Certificado público e chave privada para uso exclusivo do transporte local.
  */
 async function readIdentity(directory: Directory): Promise<{ certificatePem: string; privateKeyPem: string }> {
   const certificatePem = await readText(directory.file("tls/server.crt"));
@@ -284,18 +312,23 @@ export function initialize(options: PeerStorageOptions): Promise<{ certificatePe
   });
 }
 
-/** Lê a identidade para uso local pelo transporte; nunca encaminhar a chave à GUI ou a peers. */
+/** Lê a identidade para uso local pelo transporte; nunca encaminhar a chave à GUI ou a peers.
+ * @returns Identidade validada; a chave privada não deve sair do transporte local.
+ */
 export function localIdentity(): Promise<{ certificatePem: string; privateKeyPem: string }> {
   return serialized(() => readIdentity(state()));
 }
 
-/** Lista registros persistidos; essa consulta não autentica nem atualiza conexões. */
+/** Lista registros persistidos; essa consulta não autentica nem atualiza conexões.
+ * @returns Somente peers confiáveis, sem os campos privados de preparação.
+ */
 export function listPeers(): Promise<Peer[]> {
   return serialized(async () => (await loadPeers(state())).filter(peer => peer.status === "trusted").map(publicPeer));
 }
 
 /** Localiza um peer pelo certificado, independentemente de IP e apelido.
  * @param certificatePem Certificado público procurado.
+ * @returns Peer confiável correspondente ao certificado, ou undefined.
  */
 export function findPeer(certificatePem: string): Promise<Peer | undefined> {
   return serialized(async () => {
@@ -308,6 +341,7 @@ export function findPeer(certificatePem: string): Promise<Peer | undefined> {
 /** Salva confiança após o controller concluir o pareamento bilateral e a prova de posse.
  * Esta função não executa nem substitui pareamento, descoberta ou autenticação de rede.
  * @param input Certificado, apelido e IP obtidos do pareamento confirmado.
+ * @returns Registro confiável salvo ou atualizado.
  */
 export function savePeer(input: Pick<Peer, "certificatePem" | "displayName" | "ipAddress">): Promise<Peer> {
   return serialized(async () => publicPeer(await storePeer(input, "", "trusted")));
@@ -324,6 +358,7 @@ function validatePairingId(pairingId: string): void {
 
 /** Retira os campos de preparação das consultas públicas de peers.
  * @param peer Registro privado persistido.
+ * @returns Cópia pública sem status ou identificador da preparação.
  */
 function publicPeer(peer: StoredPeer): Peer {
   const { pairingId: _pairingId, status: _status, ...result } = peer;
@@ -344,6 +379,7 @@ export function preparePeer(input: Pick<Peer, "certificatePem" | "displayName" |
 /** Confirma somente o registro preparado pela mesma sessão, após a confirmação remota.
  * @param certificatePem Certificado cuja posse e aceite foram verificados pelo controller.
  * @param pairingId Identificador da preparação concluída nos dois dispositivos.
+ * @returns Peer confiável após publicar o índice atualizado.
  */
 export function confirmPeer(certificatePem: string, pairingId: string): Promise<Peer> {
   return serialized(async () => {
@@ -380,6 +416,7 @@ export function discardPreparedPeer(certificatePem: string, pairingId: string): 
  * @param input Dados validados do peer.
  * @param pairingId Sessão de preparação, ou vazio para o contrato legado de savePeer.
  * @param status Estado inicial do novo registro.
+ * @returns Registro interno salvo ou reencontrado para a mesma sessão.
  */
 async function storePeer(input: Pick<Peer, "certificatePem" | "displayName" | "ipAddress">, pairingId: string, status: StoredPeer["status"]): Promise<StoredPeer> {
   validatePeerData(input.displayName, input.ipAddress);
@@ -423,6 +460,7 @@ async function storePeer(input: Pick<Peer, "certificatePem" | "displayName" | "i
 /** Atualiza o apelido sem alterar os horários ou a identidade.
  * @param certificatePem Certificado do peer conhecido.
  * @param displayName Novo apelido local.
+ * @returns Peer com o novo apelido persistido.
  */
 export function updatePeer(certificatePem: string, displayName: string): Promise<Peer> {
   return serialized(async () => {
@@ -440,6 +478,7 @@ export function updatePeer(certificatePem: string, displayName: string): Promise
 /** Registra nova conexão somente depois da autenticação mTLS confirmada pelo controller.
  * @param certificatePem Certificado cuja identidade e posse da chave foram verificadas.
  * @param ipAddress Endereço observado nessa conexão, usado apenas como localização.
+ * @returns Peer com IP e horário da conexão atualizados.
  */
 export function recordConnection(certificatePem: string, ipAddress: string): Promise<Peer> {
   return serialized(async () => {

@@ -19,11 +19,10 @@ O projeto segue uma organização MVC simples:
 | Controller | [`controller/`](../controller/) | Receber as ações da aplicação e organizar os fluxos da API. |
 | View e frontend | [`GUI/`](../GUI/) | Apresentar as telas e a interação com a pessoa usuária. |
 
-As tecnologias principais são TypeScript, Express, Vite e Zod. O Vite pertence
-ao frontend planejado em [`GUI/`](../GUI/); sua presença nesta documentação
-registra a tecnologia e o local previsto, sem afirmar um fluxo executável.
-Express organiza a API, TypeScript é a linguagem principal e Zod será usado para
-validar dados em execução.
+O backend usa TypeScript e Express. A GUI usa JavaScript, React e Vite; por
+enquanto, mostra a tela inicial do Vite com um contador, sem chamadas à API.
+A validação em execução é feita por funções do controller e do model. Zod não
+está instalado nem é usado na implementação atual.
 
 Dentro dessas áreas, os fluxos principais estão separados assim:
 
@@ -31,17 +30,17 @@ Dentro dessas áreas, os fluxos principais estão separados assim:
 | --- | --- |
 | [`controller/connection/discoveryService.ts`](../controller/connection/discoveryService.ts) | Fluxo de descoberta. |
 | [`controller/connection/paringService.ts`](../controller/connection/paringService.ts) | Fluxo de pareamento. |
-| [`controller/connection/sharingService.ts`](../controller/connection/sharingService.ts) | Compartilhamento e atualização dos peers. |
+| [`controller/connection/sharingService.ts`](../controller/connection/sharingService.ts) | Validação HTTP, envio de streams e respostas de erro comuns às rotas. Notificações de arquivos ainda não existem. |
 | [`model/file/`](../model/file/) | Arquivos, diretórios e operações de arquivos. |
 | [`model/peer/peerService.ts`](../model/peer/peerService.ts) | Dados e regras dos peers. |
-| [`GUI/src/api.ts`](../GUI/src/api.ts) | Requisições locais causadas pelas ações da GUI. |
+| [`GUI/api.js`](../GUI/api.js) | Local previsto para chamadas da GUI; ainda contém somente comentários. |
 
 ## Componentes do sistema
 
 | Componente | Responsabilidade |
 | --- | --- |
 | API central | Descoberta, pareamento, verificação dos peers, persistência e operações de arquivos. |
-| Interface do usuário | Mostrar candidatos e pedidos; permitir ativar a descoberta, informar o código, aceitar ou recusar. Ainda não existe nesta branch. |
+| Interface do usuário | Está prevista para mostrar candidatos e pedidos, ativar a descoberta e permitir conferir a impressão digital completa. Esses fluxos ainda não existem na GUI. |
 | Outros componentes do ecossistema | Poderão existir em branches órfãs separadas do mesmo repositório. Seus nomes e responsabilidades adicionais ainda não foram definidos. |
 
 Uma branch órfã começa com histórico independente. Essa organização do Git não
@@ -77,12 +76,15 @@ e campos individuais, veja [Módulos e funções](classes.md).
 
 ## Tecnologias e responsabilidades
 
-| Arquivo | O que faz | O que usa |
+| Tecnologia | Papel no projeto | Uso atual |
 | --- | --- | --- |
-| TypeScript | Linguagem principal do projeto | Tipagem estática e código da aplicação |
+| TypeScript | Linguagem do backend | Tipagem estática de `model` e `controller` |
 | Express | Framework da API | Rotas e comunicação HTTP |
-| Vite | Ferramenta planejada para o frontend | Desenvolvimento e organização da interface em `GUI` |
-| Zod | Validação de dados | Regras de validação em execução |
+| JavaScript e React | Linguagem e biblioteca da GUI | Tela inicial e contador local em `GUI/src/App.jsx` |
+| Vite | Ferramenta do frontend | Desenvolvimento e build da GUI |
+
+As bibliotecas de certificados, ZIP e streams estão descritas em
+[Módulos e funções](classes.md#bibliotecas-utilizadas-pelo-model).
 
 O model usa `String.prototype.isWellFormed()` para rejeitar strings com pares
 UTF-16 incompletos na validação de caminhos e apelidos. Esse método está
@@ -92,108 +94,80 @@ do projeto descrita em [Configuração](configuration.md).
 
 ```mermaid
 flowchart LR
-    VIEW[GUI / Vite] --> CONTROLLER[controller / Express]
+    VIEW[GUI / Vite] -. integração pendente .-> CONTROLLER[controller / Express]
     CONTROLLER --> MODEL[model]
     CONTROLLER --> PEER[P2P entre dispositivos]
 ```
 
-O frontend e a API serão executados em `localhost`, em portas diferentes. O
-Vite sobe o frontend e o Express sobe a API. A comunicação entre os dois
-componentes ocorre por HTTP local, usando as requisições preparadas em
-[`GUI/src/api.ts`](../GUI/src/api.ts). A comunicação entre dispositivos usa HTTP
-protegido por TLS e segue o fluxo P2P descrito em [Conectar dispositivos](connection.md).
+O Vite inicia a GUI e o Express atende a API em outra porta. A comunicação
+local da GUI ainda precisa de contrato e implementação próprios em
+[`GUI/api.js`](../GUI/api.js). A API disponível exige mTLS de peers conhecidos,
+inclusive em `/health`; não existe uma rota HTTP local que contorne essa regra.
+A comunicação entre dispositivos segue [Conectar dispositivos](connection.md).
 
-## O que acontece ao conferir a configuração
+## O que acontece ao iniciar o backend
 
-Depois da compilação, `npm run check:config -- ...` executa
-`dist/check-config.js`. O caminho percorrido é este:
+`npm run start:backend` compila o backend e executa
+`dist/controller/api/app.js`. Nesse arquivo, `startBackend`:
 
-1. O comando obtém os argumentos de `process.argv.slice(2)` e as variáveis de
-   ambiente de `process.env`.
-2. `loadConfig` rejeita argumentos inválidos e variáveis desconhecidas que
-   começam com `PASSA_`. Para cada opção, usa o argumento do terminal, a variável
-   de ambiente ou o valor padrão, nessa ordem.
-3. No modo `self-signed`, calcula os caminhos padrão do certificado e da chave
-   quando eles não foram informados. Zod confere os tipos dos valores e as
-   combinações entre opções, como as pastas e os endereços do certificado.
-4. Se houver um problema, a função lança `ConfigurationError`. Caso contrário,
-   devolve um objeto que não pode ser alterado, incluindo suas listas.
-5. O comando mostra o resultado e termina com código `0` no sucesso, `2` para
-   configuração inválida ou `1` para uma falha inesperada. As mensagens não
-   reproduzem os valores recebidos.
+1. Carrega o `.env` da raiz sem substituir variáveis já definidas no ambiente.
+   Confere as opções com prioridade de argumentos sobre ambiente e padrões.
+2. Seleciona a raiz compartilhada. Sem `PASSA_ROOT`, cria uma pasta disponível
+   no diretório do usuário. Prepara o estado em `model/peer` e o staging em `tmp`,
+   salvo quando caminhos absolutos diferentes forem configurados.
+3. Usa `peerService` para carregar a identidade e o índice. No modo `self-signed`,
+   uma instalação nova recebe sua identidade; uma identidade existente inválida
+   não é substituída automaticamente. O modo `provided` exige os arquivos prévios.
+4. Seleciona a raiz por `fileService`, cria a aplicação com `createApp` e abre
+   HTTPS com TLS 1.3 e autenticação por certificados dos peers confiáveis.
+5. Registra o encerramento do servidor e a atualização dos certificados
+   confiáveis após um pareamento. Não ativa a descoberta automaticamente.
 
-O comando descarta o objeto retornado: sua finalidade é conferir as opções.
-Ele não cria diretórios, lê tokens, prepara certificados ou inicia o servidor.
-
-Importar `check-config` já executa esse comando. Importar `app` ou `config` apenas
-disponibiliza suas funções e tipos, sem executar o comando ou abrir conexões.
+Importar `app.ts` apenas disponibiliza suas funções e tipos. `createApp` registra
+as rotas sem abrir uma porta; `startBackend` realiza a inicialização completa.
+Falhas de configuração são separadas das respostas HTTP descritas em [Erros](errors.md).
 
 ## Conferir um caminho não é abrir o arquivo
 
-`loadConfig` trabalha somente com os dados que recebe. Por exemplo, consegue
-reduzir `/dados/pasta/../arquivos` a `/dados/arquivos`, mas não verifica se essa
-pasta existe. Também preserva os espaços que fazem parte dos nomes.
+`backendOptions`, em `app.ts`, confere o formato das opções locais. Depois,
+`Directory.open` e `Directory.openPrivate` examinam os caminhos físicos e as
+permissões necessárias. Por exemplo, uma raiz configurada com caminho absoluto
+válido ainda pode ser recusada por conter a pasta privada de estado.
 
-Para comparar caminhos, considera cada pasta do caminho: `/dados/a` não contém
-`/dados/ab`. Essa comparação é feita sobre o texto. Um link simbólico pode apontar
-para outro local no disco, e essa função não segue nem inspeciona links.
-
-Ela também não confere tipo de arquivo, dono, permissões, relação com a pasta do
-repositório ou se dois caminhos estão no mesmo sistema de arquivos. Não consulta
-o diretório de trabalho atual. Ao analisar um IP ou uma URL, não faz consultas
-DNS nem conexões de rede.
-
-Por isso, uma configuração aceita ainda pode se referir a uma pasta inacessível,
-um token ausente ou um certificado inválido. A leitura desses recursos e a
-validação dos caminhos enviados à API ainda não existem.
-
-`ConfigurationError` é um erro usado pelo comando de terminal. Ele não tem um
-status HTTP. O formato `application/problem+json` descrito em [Erros](errors.md)
-será usado pelas respostas da API, que ainda não estão disponíveis.
+Nas operações da API, os caminhos são relativos à raiz. `Directory.inspect`
+confere cada componente e recusa links internos antes do acesso. Uma validação
+textual isolada não substitui essa inspeção. As limitações diante de alterações
+feitas por outros processos estão em [Arquivos e pastas](filesystem.md).
 
 ## Como o código é compilado e testado
 
 O projeto usa módulos JavaScript com `import` e `export` (ESM). O TypeScript
-segue as regras de módulos do Node.js com `NodeNext`, gera JavaScript para
-`ES2023` e grava o resultado de `src` em `dist`.
+segue as regras de módulos do Node.js com `NodeNext` e usa `target: esnext`.
+`npm run build:backend` compila `model` e `controller` para `dist` na raiz,
+preservando seus subdiretórios.
 
 As opções `strict`, `noUncheckedIndexedAccess` e `exactOptionalPropertyTypes`
 ajudam a identificar usos de valores ausentes e tipos incompatíveis.
-`verbatimModuleSyntax` mantém a distinção entre importações de valores e de tipos.
-Veja a configuração completa na área de configuração do projeto.
+`npm run build:gui` gera o build da GUI em `GUI/dist`; `npm run lint:gui`
+executa o Oxlint nessa camada. O script `npm test` é um placeholder que termina
+com erro, não uma suíte disponível. As verificações diretas executadas e seus
+limites estão em [Testes](testing.md).
 
-Express e Zod são usados na execução. TypeScript e os pacotes de tipos são usados
-no desenvolvimento. As versões e os comandos de instalação estão em
-[Configuração](configuration.md). Não existe um script `start` para iniciar a API.
+## Organização interna
 
-A configuração dos testes compila fontes e testes para `.test-build` e usa
-`node --test` para executá-los:
-
-- Os testes de configuração chamam `loadConfig` com dados de teste.
-  Os caminhos são apenas textos; a função não lê nem cria essas pastas.
-- Os testes de inicialização executam o comando em processos separados e
-  verificam suas saídas. Usam uma pasta temporária própria para
-  detectar gravações indevidas e a remove ao terminar. Também confere que criar
-  a aplicação Express não abre um servidor.
-
-Esses testes não cobrem requisições da API ou conexões HTTP. Consulte
-[Testes](testing.md) para saber como executá-los.
-
-## Organização interna prevista
-
-As responsabilidades abaixo ainda precisam de implementação. Os nomes descrevem
-partes do sistema, não classes já existentes.
+Estas responsabilidades já possuem código, com as limitações indicadas abaixo.
+Os nomes da tabela são áreas de trabalho, não novas classes.
 
 | Parte | Responsabilidade |
 | --- | --- |
 | Identidade local | Preparar chave e certificado na instalação e preservá-los ao reiniciar. |
 | Descoberta | Validar alvos locais, limitar a varredura, reunir candidatos e encerrar a janela temporária. |
-| Pareamento | Associar pedido, certificados e código; obter aceite; confirmar os dois lados sem liberar arquivos antes da hora. |
+| Pareamento | Associar pedido e certificados, conferir a impressão digital completa e confirmar as duas pontas. O aceite é uma chamada local, sem interface pronta. |
 | Registro de peers | Guardar nome, certificado e horários; atualizar conexão conhecida sem usar IP como identidade. |
 | Transporte mTLS | Conferir os certificados e a prova de posse das chaves conforme o contexto de pareamento ou uso normal. |
-| HTTP e validação | Interpretar método, rota, parâmetros e corpo com Express e Zod; representar respostas de forma consistente. |
+| HTTP e validação | Interpretar método, rota, parâmetros e corpo com Express e funções de validação existentes; representar respostas de forma consistente. |
 | Operações de arquivos | Coordenar consultas, envio, cópia, movimentação e exclusão dentro da raiz local. |
-| Acesso ao sistema operacional | Tratar caminhos, links, permissões, arquivos abertos e encerramento nativos de Linux e Windows. |
+| Acesso ao sistema operacional | Tratar caminhos, links e permissões POSIX. O armazenamento privado no Windows ainda é recusado por falta da proteção por ACL. |
 | Configuração e erros | Conferir valores, descrever falhas sem segredos e separar erros TLS, HTTP e do processo local. |
 
 As regras de arquivos não precisarão conhecer `Request` ou `Response` do Express.
@@ -208,8 +182,8 @@ varreduras arbitrárias ou confirmar seu próprio aceite.
    a posse da chave correspondente e a política de validade.
 3. Só depois de concluir a verificação mútua uma requisição chega às operações
    de arquivos. `/health` também não funciona como atalho de descoberta pública.
-4. Zod confere parâmetros e corpo. As regras de caminhos verificam origem,
-   destino e pastas intermediárias necessárias.
+4. As rotas e `sharingService` conferem parâmetros e corpo. O model verifica
+   origem, destino e pastas intermediárias necessárias.
 5. A operação processa os dados por partes, respeita limites e limpa temporários.
 6. O servidor envia a resposta. Uma falha após o começo de um download encerra
    a transferência; não acrescenta JSON ao arquivo.
@@ -240,6 +214,5 @@ falha nem representar todos os arquivos no mesmo instante. Os limites ficam em
 ## Referências das bibliotecas
 
 - [Express 5](https://expressjs.com/en/5x/api.html): tratamento de requisições e respostas HTTP.
-- [Zod](https://zod.dev/): validação dos dados durante a execução.
 - [TypeScript](https://www.typescriptlang.org/docs/handbook/2/basic-types.html): verificação dos tipos durante o desenvolvimento.
-- [Node.js 24](https://nodejs.org/docs/latest-v24.x/api/): funções de rede, arquivos e criptografia. O uso de `node:http`, `node:tls`, `node:crypto`, `node:fs` e streams no código da API ainda precisa ser implementado.
+- [Node.js 24](https://nodejs.org/docs/latest-v24.x/api/): referência dos módulos nativos usados para rede, arquivos, criptografia e streams. A versão do ambiente verificado está registrada em [Testes](testing.md).

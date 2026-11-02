@@ -1,3 +1,10 @@
+/**
+ * Responsabilidade: Registrar upload, cópia, criação, exclusão e movimentação, validando as
+ * requisições antes de chamar o model.
+ *
+ * Exemplo prático: Um PUT /api/v2/files?path=nota.txt aceita uma parte multipart file e só
+ * responde sucesso depois de publicar o conteúdo.
+ */
 import type { Request, Response, Router } from "express";
 import busboy from "busboy";
 import type { Readable } from "node:stream";
@@ -11,6 +18,10 @@ import { jsonObject, metadataLocation, noBody, overwriteField, query, stringFiel
  * @param uploadMaxBytes Limite dos bytes do arquivo, sem contar os separadores multipart.
  */
 export function registerChanges(router: Router, jsonMaxBytes: number, uploadMaxBytes = 1_073_741_824): void {
+  /** Recebe o multipart e publica o arquivo antes de responder criação ou substituição.
+   * @param request Requisição validada pelo controle de acesso deste listener.
+   * @param response Resposta enviada depois de concluir a operação.
+   */
   router.put("/api/v2/files", async (request, response) => {
     const fields = query(request, ["path"]);
     const path = stringField(fields.path);
@@ -23,6 +34,10 @@ export function registerChanges(router: Router, jsonMaxBytes: number, uploadMaxB
       } else response.status(204).end();
     } finally { cancellation.dispose(); }
   });
+  /** Copia a entrada pelo model e informa se o destino foi criado.
+   * @param request Requisição validada pelo controle de acesso deste listener.
+   * @param response Resposta enviada depois de concluir a operação.
+   */
   router.post("/api/v2/actions/copy", async (request, response) => {
     query(request, []);
     const body = await jsonObject(request, response, jsonMaxBytes, ["sourcePath", "targetPath", "overwrite"]);
@@ -36,6 +51,10 @@ export function registerChanges(router: Router, jsonMaxBytes: number, uploadMaxB
       response.status(result.created ? 201 : 200).json(result.entry);
     } finally { cancellation.dispose(); }
   });
+  /** Cria a pasta solicitada ou devolve a pasta já existente.
+   * @param request Requisição validada pelo controle de acesso deste listener.
+   * @param response Resposta enviada depois de concluir a operação.
+   */
   router.put("/api/v2/directories", async (request, response) => {
     const fields = query(request, ["path"]);
     await noBody(request);
@@ -43,12 +62,20 @@ export function registerChanges(router: Router, jsonMaxBytes: number, uploadMaxB
     if (result.created) response.location(metadataLocation(result.entry.path));
     response.status(result.created ? 201 : 200).json(result.entry);
   });
+  /** Exclui a entrada pelo model e só então responde sem corpo.
+   * @param request Requisição validada pelo controle de acesso deste listener.
+   * @param response Resposta enviada depois de concluir a operação.
+   */
   router.delete("/api/v2/entries", async (request, response) => {
     const fields = query(request, ["path"]);
     await noBody(request);
     await files.remove(stringField(fields.path));
     response.status(204).end();
   });
+  /** Valida as alterações e encaminha a movimentação ou renomeação ao model.
+   * @param request Requisição validada pelo controle de acesso deste listener.
+   * @param response Resposta enviada depois de concluir a operação.
+   */
   router.patch("/api/v2/entries", async (request, response) => {
     const fields = query(request, ["path"]);
     const path = stringField(fields.path);
@@ -63,6 +90,7 @@ export function registerChanges(router: Router, jsonMaxBytes: number, uploadMaxB
 /** Vincula o cancelamento da operação à desconexão, sem confundir fim do corpo com desconexão.
  * @param request Requisição autenticada.
  * @param response Resposta da operação, ainda não concluída.
+ * @returns Sinal de cancelamento e operação para remover os observadores.
  */
 function requestCancellation(request: Request, response: Response): { signal: AbortSignal; dispose: () => void } {
   const controller = new AbortController();
@@ -102,7 +130,9 @@ function multipartFile(request: Request, signal: AbortSignal): AsyncIterable<Uin
   } catch { throw modelError("malformed_request", "O cabeçalho multipart não tem um boundary válido."); }
   return receive();
 
-  /** Mantém o fluxo sob controle de vazão e aguarda a validação do fechamento multipart. */
+  /** Mantém o fluxo sob controle de vazão e aguarda a validação do fechamento multipart.
+   * @returns Bytes da parte file; falhas de validação ou cancelamento interrompem a leitura.
+   */
   async function* receive(): AsyncGenerator<Uint8Array> {
     let file: Readable | undefined;
     let failure: Error | undefined;

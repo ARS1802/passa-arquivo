@@ -1,9 +1,9 @@
 # Arquivos e pastas
 
-A API ainda não recebe requisições nem manipula arquivos. Este guia descreve as
-regras previstas para essas operações. O comando de configuração já confere
-caminhos absolutos e compara os caminhos informados, mas não examina o disco nem
-verifica se uma pasta pode ser acessada.
+A API já encaminha operações de arquivos a `fileService`, que usa `File` e
+`Directory` para acessar o disco. Este guia descreve as regras implementadas
+e os limites que continuam importantes, como concorrência com outros programas
+e suporte ainda incompleto a Windows.
 
 Os parâmetros e as respostas de cada operação estão no [guia de rotas](endpoints.md).
 Veja também os [erros](errors.md), a [configuração](configuration.md) e os
@@ -19,8 +19,7 @@ recebem os campos JSON descritos no [guia de rotas](endpoints.md).
 Caminhos absolutos, segmentos `..`, bytes nulos e formatos ambíguos precisam ser
 recusados antes da operação. Espaços que fazem parte de nomes são preservados.
 
-As regras exatas de leitura e classificação dos caminhos ainda estão em
-definição. A tabela considera uma única decodificação da URL: `%20`, por exemplo,
+A tabela considera uma única decodificação da URL: `%20`, por exemplo,
 vira um espaço apenas nessa leitura. Campos JSON não passam por essa
 decodificação. Também não há correção automática do caminho, remoção de espaços
 com `trim`, expansão de `~` ou variáveis de ambiente, nem alteração da forma de
@@ -73,8 +72,8 @@ macOS não faz parte do alvo atual.
 
 Nas respostas, `type` é `file` ou `directory`. O campo `size` informa o tamanho de
 um arquivo em bytes e vale `null` para pastas; não há cálculo de tamanho recursivo.
-`modifiedAt` usa o horário UTC. Ainda estão em definição o formato ISO 8601 com
-milissegundos e sufixo `Z`, e o uso de `name: "."` para a raiz. O caminho da raiz
+`modifiedAt` usa o horário UTC em formato ISO 8601 com milissegundos e sufixo `Z`.
+Para a raiz, o nome é `name: "."`. O caminho da raiz
 é sempre `path: "."`.
 As respostas não incluem caminhos absolutos do servidor.
 
@@ -88,13 +87,13 @@ A raiz pode ser consultada, listada e compactada. Pedir a criação de `.` devol
 a pasta existente, sem apagar seu conteúdo. A raiz não pode ser excluída, movida,
 renomeada ou usada como origem de uma cópia nesta versão.
 
-A preparação da raiz ainda está em definição. O comportamento considerado exige
-que ela já exista e seja uma pasta, evitando criar uma pasta errada por causa de
-um erro de digitação. Seu caminho real seria resolvido antes de conferir a
-separação dos diretórios privados. Um link no caminho escolhido pelo
-administrador poderia determinar essa localização inicial, mas não liberaria
-links dentro da raiz. As operações também precisariam detectar mudanças na
-identidade da raiz que invalidassem essa configuração.
+Uma raiz configurada explicitamente precisa existir e ser uma pasta. Quando
+`PASSA_ROOT` é omitido, o controller cria uma pasta disponível no diretório do
+usuário, como explicado em [Configuração](configuration.md).
+`Directory.open` resolve a localização real antes de conferir a separação dos
+diretórios privados. Um link no caminho escolhido pelo administrador pode
+determinar essa localização inicial; isso não libera links dentro da raiz.
+As operações conferem se a identidade da raiz mudou desde a abertura.
 
 ### Links e tipos de arquivo
 
@@ -109,24 +108,24 @@ points que redirecionem acesso. A proteção não pode depender apenas de uma
 checagem de links feita como no Linux; os mecanismos por plataforma ainda
 precisam ser definidos e verificados.
 
-Os detalhes de verificação abaixo ainda estão em definição:
+O model realiza as seguintes verificações:
 
-- Cada parte existente do caminho seria examinada sem seguir links, conferindo
-  seu tipo e sua localização real. Um destino novo exigiria a conferência da
+- Cada parte existente do caminho é examinada sem seguir links, conferindo
+  seu tipo e sua localização real. Um destino novo exige a conferência da
   pasta ancestral existente antes de criar as partes permitidas.
-- Somente arquivos regulares e pastas seriam aceitos. Dispositivos, sockets,
-  FIFOs e outros arquivos especiais receberiam `403 entry_forbidden`.
-- A listagem inteira seria recusada com `403 entry_forbidden` se um filho fosse
-  um link simbólico ou arquivo especial. A resposta não ocultaria esses itens
-  nem criaria um terceiro valor de `type`.
-- Arquivos com mais de um hard link detectável (`nlink > 1`) seriam recusados,
+- Somente arquivos regulares e pastas são aceitos. Dispositivos, sockets,
+  FIFOs e outros arquivos especiais recebem `403 entry_forbidden`.
+- A listagem inteira é recusada com `403 entry_forbidden` se um filho for
+  um link simbólico ou arquivo especial. A resposta não oculta esses itens
+  nem cria um terceiro valor de `type`.
+- Arquivos com mais de um hard link detectável (`nlink > 1`) são recusados,
   inclusive em operações recursivas, com `403 entry_forbidden`. Um hard link é
   outro nome para o mesmo arquivo. Essa checagem reduz o risco de expor um arquivo que
   também tenha um nome fora da raiz, mas não impede que outro processo crie
   um link enquanto a operação ocorre.
-- As operações ficariam em um único sistema de arquivos local; a passagem
-  detectada para outro dispositivo resultaria em `409 cross_device_operation`.
-  A comparação entre origem e destino também consideraria a identidade real das entradas, quando
+- As operações ficam em um único sistema de arquivos local; a passagem
+  detectada para outro dispositivo resulta em `409 cross_device_operation`.
+  A comparação entre origem e destino também considera a identidade real das entradas, quando
   disponível, além dos nomes dos caminhos.
 
 Essas verificações não detectam todas as montagens. Um *bind mount*, por exemplo,
@@ -144,8 +143,8 @@ real e não podem ser alcançados por links ou outros caminhos configurados pelo
 administrador. Staging é a área temporária usada para preparar arquivos antes
 de colocá-los no destino.
 
-A verificação física de sobreposição com o repositório e as pastas privadas ainda
-está em definição. Ela precisa considerar os dois sentidos: tanto uma pasta
+A verificação física de sobreposição com o repositório e as pastas privadas
+considera os dois sentidos: tanto uma pasta
 privada dentro da raiz quanto a raiz dentro de uma pasta privada podem expor
 arquivos internos. Uma lista de nomes ocultos não oferece essa proteção. As
 restrições das opções estão no [guia de configuração](configuration.md).
@@ -166,9 +165,9 @@ O [guia de rotas](endpoints.md) traz os parâmetros, respostas e exemplos comple
 | Cópia | Recebe o caminho final completo, com pai existente; não acrescenta o nome de origem automaticamente; não copia a raiz, uma entrada sobre si mesma ou uma pasta para dentro de si mesma; cria com `201`; substituição permitida de arquivo resulta em `200` |
 | Compactação | Recebe somente pasta, inclusive a raiz; envia ZIP aos poucos, sem guardá-lo inteiro na memória; usa nomes relativos à pasta solicitada e preserva pastas vazias; não cria ZIP permanente nem tarefa persistente |
 
-A ordem dos nomes na listagem ainda está em definição: comparação dos bytes
-UTF-8, em ordem lexicográfica, diferenciando maiúsculas de minúsculas e sem
-depender do idioma configurado no sistema.
+A listagem ordena os nomes pelos bytes UTF-8, diferenciando maiúsculas de
+minúsculas e sem depender do idioma configurado no sistema. Pastas aparecem
+antes dos arquivos.
 
 ### Substituir e repetir operações
 
@@ -183,7 +182,7 @@ pode ser removida para abrir espaço.
 no destino. Não é uma opção de bloqueio: leitura e edição por outros programas
 durante envio, cópia e movimentação seguem a regra de acesso simultâneo abaixo.
 
-Os códigos para algumas recusas ainda estão em definição: `403 entry_forbidden`
+Os códigos para essas recusas são `403 entry_forbidden`
 ao tentar modificar a raiz de forma proibida; `422 validation_failed` ao mover
 uma pasta para dentro de si mesma ou copiar uma entrada sobre si mesma ou para
 um descendente. Um PATCH que mantém o nome e a localização atuais retorna `200`
@@ -208,17 +207,18 @@ Preservar o destino em uma falha significa que a operação não o substitui nem
 o apaga antes da publicação. Isso não congela o conteúdo nem desfaz edições
 realizadas por outros programas enquanto a operação estava em andamento.
 
-Os detalhes dessa preparação ainda estão em definição: staging fora da raiz e
-no mesmo sistema de arquivos do destino. No Linux, pastas de permissão `0700`
-e arquivos `0600`; no Windows, ACLs que protejam o mesmo conjunto de dados.
-Cada operação teria uma área exclusiva, com nome
-imprevisível. Antes de publicar, seriam conferidos novamente origem, pai, tipo
-de entrada e possíveis conflitos. Uma cópia de pasta seria montada inteira em
-staging antes de receber o nome final, sem apagar o destino antecipadamente.
+Staging fica fora da raiz e precisa estar no mesmo sistema de arquivos do
+destino. No Linux, usa pastas `0700` e arquivos `0600`. O armazenamento privado
+no Windows é recusado enquanto a proteção por ACL não estiver implementada.
+Cada operação recebe uma pasta exclusiva, criada com `mkdtemp`. Antes de
+publicar um arquivo, `File.write` confere novamente o destino e seu pai. Uma
+cópia de pasta é montada inteira em staging antes de receber o nome final.
 
-A operação do sistema usada para publicar o arquivo ainda não foi escolhida.
-Conferir se um nome existe e depois renomear um arquivo não garante que outro
-programa não crie algo nesse intervalo. Uma falha `EXDEV`, que indica a tentativa
+`File.write` publica arquivos novos com `link`, que falha se o nome já estiver
+ocupado; quando a substituição é permitida, usa `rename`. A cópia de diretório
+usa movimentação após conferir o destino. Conferir um nome e depois renomear
+não impede que outro programa altere esse nome no intervalo; a aplicação não
+promete isolamento completo dessas mudanças. Uma falha `EXDEV`, que indica a tentativa
 de cruzar sistemas de arquivos, corresponde a `409 cross_device_operation`.
 Movimentação não é substituída automaticamente por cópia seguida de exclusão.
 Se o local configurado para staging impossibilitar a publicação, a preparação
@@ -236,8 +236,8 @@ de outras operações.
 
 ### Limites do ZIP
 
-A quantidade de entradas e o volume do ZIP têm limites configuráveis. A forma
-exata de contar ainda está em definição: cada arquivo e pasta descendente conta
+A quantidade de entradas e o volume do ZIP têm limites configuráveis. Cada
+arquivo e pasta descendente conta
 como uma entrada, inclusive pastas vazias; a pasta solicitada funciona como o
 contêiner e não conta novamente. O volume é a soma dos bytes lidos dos arquivos
 antes da compressão, e não o tamanho final do ZIP.
@@ -245,9 +245,9 @@ antes da compressão, e não o tamanho final do ZIP.
 Os limites precisam ser conferidos durante a leitura, mesmo que exista uma
 estimativa anterior. Se o limite for excedido antes dos headers, a resposta é
 `413 payload_too_large`. Depois de começar a resposta, a transferência é
-interrompida, conforme o [guia de erros](errors.md). Staging eventualmente usado
-precisa ser descartado em caso de sucesso, falha ou desconexão. A biblioteca de
-ZIP e a forma de preparar o arquivo ainda não foram escolhidas.
+interrompida, conforme o [guia de erros](errors.md). `Directory.archive` usa
+`yazl` para gerar o ZIP por partes, sem arquivo permanente nem staging para o
+resultado. Encerrar a saída também encerra as leituras ativas.
 
 ## Operações ao mesmo tempo e falhas parciais
 

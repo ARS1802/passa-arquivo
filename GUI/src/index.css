@@ -1,3 +1,9 @@
+/**
+ * Responsabilidade: Definir fontes, cores e estilos globais usados pela GUI.
+ *
+ * Exemplo prático: Ao mudar a preferência de tema do sistema, as regras globais ajustam as
+ * cores da página.
+ */
 :root {
   --text: #6b6375;
   --text-h: #08060d;

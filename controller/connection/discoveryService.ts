@@ -1,3 +1,10 @@
+/**
+ * Responsabilidade: Delimitar a descoberta local e consultar candidatos sem conceder
+ * confiança aos certificados encontrados.
+ *
+ * Exemplo prático: Ao buscar endereços da rede selecionada, consulta até oito destinos por
+ * vez e separa anúncios válidos das falhas.
+ */
 import { X509Certificate } from "node:crypto";
 import { request } from "node:https";
 import { BlockList, isIP } from "node:net";
@@ -44,14 +51,17 @@ let window: DiscoveryWindow | undefined;
 
 /** Padroniza um IP literal, sem DNS, zona ou endereço IPv4 mapeado em IPv6.
  * @param value IP fornecido pela ação local.
+ * @returns IP literal padronizado que representa um destino individual permitido.
  */
 function canonicalIp(value: string): string {
   if (typeof value !== "string" || !isIP(value) || value.includes("%")) {
     throw modelError("validation_failed", "Informe endereços IP literais válidos.");
   }
-  const result = isIP(value) === 6 ? new URL(`http://[${value}]/`).hostname.slice(1, -1) : value;
-  if (result === "::" || result.startsWith("::ffff:") || result.startsWith("ff") && isIP(result) === 6
-    || isIP(result) === 4 && (result === "0.0.0.0" || Number(result.split(".")[0]) >= 224)) {
+  const isIpv6 = isIP(value) === 6;
+  const result = isIpv6 ? new URL(`http://[${value}]/`).hostname.slice(1, -1) : value;
+  const forbiddenIpv6 = isIpv6 && (result === "::" || result.startsWith("::ffff:") || result.startsWith("ff"));
+  const forbiddenIpv4 = !isIpv6 && (result === "0.0.0.0" || Number(result.split(".")[0]) >= 224);
+  if (forbiddenIpv6 || forbiddenIpv4) {
     throw modelError("validation_failed", "O endereço não identifica um destino individual permitido.");
   }
   return result;
@@ -59,6 +69,7 @@ function canonicalIp(value: string): string {
 
 /** Converte IPv4 já validado para um inteiro sem sinal.
  * @param value Endereço IPv4 literal.
+ * @returns Valor numérico do endereço IPv4.
  */
 function ipv4Number(value: string): number {
   return value.split(".").reduce((result, octet) => result * 256 + Number(octet), 0);
@@ -66,6 +77,7 @@ function ipv4Number(value: string): number {
 
 /** Confere um CIDR IPv4 escrito com o endereço da rede, sem corrigir bits de host.
  * @param value Rede escolhida pelo usuário local.
+ * @returns Primeiro e último endereços da rede e comprimento do prefixo.
  */
 function ipv4Network(value: string): { start: number; end: number; prefix: number } {
   const match = typeof value === "string" ? /^(\d+\.\d+\.\d+\.\d+)\/(0|[1-9]|[12][0-9]|3[0-2])$/.exec(value) : null;
@@ -79,6 +91,7 @@ function ipv4Network(value: string): { start: number; end: number; prefix: numbe
 
 /** Obtém as interfaces reais selecionadas, sem presumir que todo IP privado seja local.
  * @param interfaceName Nome da interface; omitido, considera as interfaces do sistema.
+ * @returns Endereços das interfaces selecionadas disponíveis no sistema.
  */
 function localNetworks(interfaceName?: string) {
   const available = networkInterfaces();
@@ -94,6 +107,7 @@ function localNetworks(interfaceName?: string) {
 /** Confere se o IP pertence às redes das interfaces locais selecionadas.
  * @param ipAddress IP literal sem identificador de zona.
  * @param interfaceName Interface escolhida, quando houver.
+ * @returns true quando o IP pertence a uma rede local permitida.
  */
 export function isLocalTarget(ipAddress: string, interfaceName?: string): boolean {
   const ip = canonicalIp(ipAddress);
@@ -116,6 +130,7 @@ export function isLocalTarget(ipAddress: string, interfaceName?: string): boolea
 /** Expande somente CIDRs IPv4 locais e remove destinos repetidos antes de abrir conexões.
  * @param targets IPs e redes escolhidos pelo usuário local.
  * @param interfaceName Interface utilizada para delimitar as redes permitidas.
+ * @returns Destinos locais distintos, limitados a 256 endereços.
  */
 export function resolveTargets(targets: DiscoveryTargets, interfaceName?: string): string[] {
   localNetworks(interfaceName);
@@ -153,6 +168,7 @@ export function resolveTargets(targets: DiscoveryTargets, interfaceName?: string
 /** Abre a janela somente por chamada local; não abre portas por conta própria.
  * @internal O listener temporário chama esta função depois de validar a configuração local.
  * @param interfaceName Interface escolhida para delimitar os destinos.
+ * @returns Sinal de cancelamento e prazo da janela aberta.
  */
 export function activateDiscovery(interfaceName?: string): { signal: AbortSignal; expiresAt: string } {
   localNetworks(interfaceName);
@@ -165,13 +181,16 @@ export function activateDiscovery(interfaceName?: string): { signal: AbortSignal
   return { signal: controller.signal, expiresAt: new Date(expiresAt).toISOString() };
 }
 
-/** Informa se a janela local ainda permite consultas e novos pedidos. */
+/** Informa se a janela local ainda permite consultas e novos pedidos.
+ * @returns true enquanto a janela estiver aberta e dentro do prazo.
+ */
 export function isDiscoveryActive(): boolean {
   return !!window && !window.controller.signal.aborted && Date.now() < window.expiresAt;
 }
 
 /** Consulta a janela local para vincular os pedidos ao mesmo prazo, cancelamento e interface.
  * @throws Se a descoberta estiver desativada ou expirada.
+ * @returns Sinal, prazo e interface da janela local ativa.
  */
 export function getDiscoveryWindow(): { signal: AbortSignal; expiresAt: string; interfaceName: string | undefined } {
   if (!window || !isDiscoveryActive()) throw modelError("discovery_inactive", "Ative a descoberta local antes de criar pedidos.");
@@ -196,6 +215,7 @@ export function validateCandidateCertificate(certificate: X509Certificate): void
  * @param ipAddress Destino já conferido contra as interfaces locais.
  * @param identity Identidade local usada para provar posse da chave no TLS.
  * @param scope Janela que deve cancelar a tentativa quando encerrada.
+ * @returns Candidato conferido ou motivo da falha, sem persistir confiança.
  */
 async function probe(ipAddress: string, identity: Awaited<ReturnType<typeof localIdentity>>, scope: DiscoveryWindow): Promise<Candidate | DiscoveryFailure> {
   return new Promise(resolve => {
@@ -212,13 +232,25 @@ async function probe(ipAddress: string, identity: Awaited<ReturnType<typeof loca
       if (timeout) clearTimeout(timeout);
       resolve(result);
     };
+    /** Conclui uma tentativa malsucedida, priorizando cancelamento, prazo e resposta inválida. */
+    const finishFailure = (): void => {
+      let reason: DiscoveryFailure["reason"] = "unreachable";
+      if (scope.controller.signal.aborted) reason = "cancelled";
+      else if (timedOut) reason = "timeout";
+      else if (invalidResponse) reason = "invalid_response";
+      finish({ ipAddress, reason });
+    };
     const host = ipAddress.startsWith("fe80:") ? `${ipAddress}%${scope.interfaceName}` : ipAddress;
     const outgoing = request({
       host, port: discoveryLimits.port, path: "/connect", method: "GET", agent: false,
       cert: identity.certificatePem, key: identity.privateKeyPem,
       // Exclusivo do contexto de candidatos: nenhum dado é tratado como confiança.
       rejectUnauthorized: false, minVersion: "TLSv1.3", maxVersion: "TLSv1.3", signal: scope.controller.signal,
-    }, response => {
+    },
+    /** Confere o handshake e recebe um anúncio limitado, ainda sem confiar no candidato.
+     * @param response Resposta da entrada temporária de descoberta.
+     */
+    response => {
       response.on("error", () => { invalidResponse = true; outgoing.destroy(); });
       try {
         const socket = response.socket;
@@ -230,11 +262,15 @@ async function probe(ipAddress: string, identity: Awaited<ReturnType<typeof loca
         validateCandidateCertificate(presented);
         const chunks: Buffer[] = [];
         let total = 0;
+        /** Acumula somente os bytes permitidos para um anúncio.
+         * @param chunk Próximo bloco recebido na resposta HTTPS.
+         */
         response.on("data", (chunk: Buffer) => {
           total += chunk.length;
           if (total > discoveryLimits.responseBytes) { invalidResponse = true; outgoing.destroy(); }
           else chunks.push(chunk);
         });
+        /** Confere o JSON completo e exige o mesmo certificado apresentado no TLS. */
         response.on("end", () => {
           try {
             const bytes = Buffer.concat(chunks);
@@ -252,11 +288,9 @@ async function probe(ipAddress: string, identity: Awaited<ReturnType<typeof loca
         });
       } catch { invalidResponse = true; outgoing.destroy(); }
     });
-    outgoing.on("error", () => finish({ ipAddress, reason: scope.controller.signal.aborted ? "cancelled" : timedOut ? "timeout" : invalidResponse ? "invalid_response" : "unreachable" }));
+    outgoing.on("error", finishFailure);
     // close também cobre destruição após os cabeçalhos, sem um novo evento error na requisição.
-    outgoing.on("close", () => {
-      if (!settled) finish({ ipAddress, reason: scope.controller.signal.aborted ? "cancelled" : timedOut ? "timeout" : invalidResponse ? "invalid_response" : "unreachable" });
-    });
+    outgoing.on("close", finishFailure);
     timeout = setTimeout(() => { timedOut = true; outgoing.destroy(); }, discoveryLimits.attemptMs);
     outgoing.end();
   });
