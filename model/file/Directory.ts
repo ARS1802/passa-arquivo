@@ -6,31 +6,20 @@
  * dos arquivos, sem permitir sair da raiz.
  */
 import { type Stats } from "node:fs";
-import { chmod, lstat, mkdir, mkdtemp, readdir, realpath, rename, rmdir } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, realpath, rename, rmdir } from "node:fs/promises";
 import { isUtf8 } from "node:buffer";
 import { Readable } from "node:stream";
 import { ZipFile } from "yazl";
 import path from "node:path";
 import { File, errorCode, modelError, type EntryMetadata } from "./File.js";
 
-/** Locais privados que precisam permanecer separados da pasta compartilhada. */
+/** Locais que precisam permanecer separados da pasta compartilhada. */
 export interface DirectoryBoundaries {
   stateDir: string;
   stagingDir: string;
-  repositoryDir: string;
 }
 
-/** Confere contenção por componentes, inclusive a igualdade.
- * @param parent Caminho absoluto do possível ancestral.
- * @param candidate Caminho absoluto a comparar.
- * @returns true quando candidate é igual a parent ou está dentro dele.
- */
-export function containsPath(parent: string, candidate: string): boolean {
-  const relative = path.relative(parent, candidate);
-  return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`));
-}
-
-/** Resolve a parte existente de uma configuração, permitindo diretórios privados ainda ausentes.
+/** Resolve a parte existente de uma configuração, permitindo diretórios ainda ausentes.
  * @param value Caminho absoluto nativo, sem expansão de variáveis.
  * @returns Caminho absoluto com os componentes existentes resolvidos no disco.
  */
@@ -81,88 +70,48 @@ export class Directory {
   readonly #rootPath: string;
   readonly #rootStats: Stats;
   readonly #path: string;
-  readonly #privateStorage: boolean;
-
   /** Cria uma referência já associada à raiz conferida por open.
    * @param rootPath Localização real da raiz.
    * @param rootStats Identidade da raiz na abertura.
    * @param relativePath Caminho relativo da pasta representada.
-   * @param privateStorage Indica armazenamento privado com permissões restritas.
    */
-  private constructor(rootPath: string, rootStats: Stats, relativePath = ".", privateStorage = false) {
+  private constructor(rootPath: string, rootStats: Stats, relativePath = ".") {
     this.#rootPath = rootPath;
     this.#rootStats = rootStats;
     this.#path = relativePath;
-    this.#privateStorage = privateStorage;
   }
 
-  /** Abre uma raiz existente e recusa sobreposição com estado, staging e repositório.
+  /** Abre uma raiz existente.
    * @param rootPath Caminho absoluto escolhido pelo usuário.
-   * @param boundaries Caminhos absolutos das áreas que não podem ser compartilhadas.
+   * @param boundaries Caminhos auxiliares da instalação.
    * @returns Raiz validada para acesso aos arquivos compartilhados.
    */
-  static async open(rootPath: string, boundaries: DirectoryBoundaries): Promise<Directory> {
+  static async open(rootPath: string, _boundaries: DirectoryBoundaries): Promise<Directory> {
     const root = await configuredPath(rootPath);
     const stats = await lstat(root);
     if (!stats.isDirectory()) throw modelError("entry_conflict", "A raiz precisa ser uma pasta existente.");
-    for (const value of [boundaries.stateDir, boundaries.stagingDir, boundaries.repositoryDir]) {
-      const forbidden = await configuredPath(value);
-      if (containsPath(root, forbidden) || containsPath(forbidden, root)) {
-        throw modelError("path_forbidden", "A pasta compartilhada se sobrepõe a uma área privada.");
-      }
-    }
     return new Directory(root, stats);
   }
 
-  /** Prepara armazenamento privado no Linux.
-   * No Windows, a definição e verificação das ACLs ainda são necessárias.
-   * @param rootPath Caminho absoluto da área privada.
-   * @param excludedPaths Áreas que não podem conter nem estar contidas neste armazenamento.
-   * @param repositoryDir Quando informado, permite apenas model/peer e tmp dentro do repositório,
-   * preparando esses dois diretórios com permissão 0700. Outros locais existentes mantêm suas permissões.
-   * @returns Diretório privado com separação e permissões conferidas.
+  /** Abre uma área auxiliar usada durante operações locais.
+   * @param rootPath Caminho absoluto da área.
+   * @returns Diretório validado para operações locais.
    */
-  static async openPrivate(rootPath: string, excludedPaths: readonly string[], repositoryDir?: string): Promise<Directory> {
-    if (process.platform === "win32") throw modelError("private_storage_unavailable", "A proteção por ACL ainda não foi definida para Windows.");
+  static async openArea(rootPath: string): Promise<Directory> {
     const root = await configuredPath(rootPath);
-    let managed = false;
-    if (repositoryDir !== undefined) {
-      const repository = await configuredPath(repositoryDir);
-      const expectedState = path.join(repository, "model", "peer");
-      const expectedStaging = path.join(repository, "tmp");
-      managed = root === expectedState || root === expectedStaging;
-      if (!managed && (containsPath(root, repository) || containsPath(repository, root))) {
-        throw modelError("path_forbidden", "O armazenamento privado não pode ocupar esta área do repositório.");
-      }
-    }
-    for (const value of excludedPaths) {
-      const excluded = await configuredPath(value);
-      if (containsPath(root, excluded) || containsPath(excluded, root)) {
-        throw modelError("path_forbidden", "O armazenamento privado se sobrepõe a uma área protegida.");
-      }
-    }
-    await mkdir(root, { recursive: true, mode: 0o700 });
-    let stats = await lstat(root);
-    if (managed && stats.isDirectory() && !stats.isSymbolicLink() && (!process.getuid || stats.uid === process.getuid())) {
-      await chmod(root, 0o700);
-      stats = await lstat(root);
-    }
-    if (!stats.isDirectory() || stats.isSymbolicLink() || await realpath(root) !== root
-      || (stats.mode & 0o077) !== 0 || (process.getuid && stats.uid !== process.getuid())) {
-      throw modelError("entry_forbidden", "O armazenamento privado precisa ser uma pasta acessível somente ao dono.");
-    }
-    return new Directory(root, stats, ".", true);
+    await mkdir(root, { recursive: true });
+    const stats = await lstat(root);
+    return new Directory(root, stats);
   }
 
-  /** Cria uma área temporária exclusiva, somente sob armazenamento privado.
+  /** Cria uma área temporária exclusiva.
    * @returns Diretório exclusivo cuja limpeza cabe à operação que o criou.
    */
   async temporary(): Promise<Directory> {
-    if (!this.#privateStorage) throw modelError("entry_forbidden", "Temporários exigem armazenamento privado.");
     const { absolutePath } = await this.inspect(this.path, "directory");
     const temporaryPath = await mkdtemp(path.join(absolutePath, ".operation-"));
     const relativePath = path.relative(this.#rootPath, temporaryPath).split(path.sep).join("/");
-    return new Directory(this.#rootPath, this.#rootStats, relativePath, true);
+    return new Directory(this.#rootPath, this.#rootStats, relativePath);
   }
 
   /** Representa um arquivo, inclusive um destino ainda ausente.
@@ -223,9 +172,6 @@ export class Directory {
       || await realpath(absolutePath) !== this.#rootPath) {
       throw modelError("entry_forbidden", "A raiz compartilhada mudou; selecione-a novamente.");
     }
-    if (this.#privateStorage && ((stats.mode & 0o077) !== 0 || (process.getuid && stats.uid !== process.getuid()))) {
-      throw modelError("entry_forbidden", "As permissões do armazenamento privado mudaram.");
-    }
     const parts = relativePath === "." ? [] : relativePath.split("/");
     for (const [index, part] of parts.entries()) {
       absolutePath = path.join(absolutePath, part);
@@ -239,9 +185,6 @@ export class Directory {
         throw modelError("entry_forbidden", "Links e entradas especiais não são permitidos.");
       }
       if (stats.dev !== this.#rootStats.dev) throw modelError("cross_device_operation", "A entrada pertence a outro sistema de arquivos.");
-      if (this.#privateStorage && ((stats.mode & 0o077) !== 0 || (process.getuid && stats.uid !== process.getuid()))) {
-        throw modelError("entry_forbidden", "Uma entrada privada tem permissões incompatíveis.");
-      }
       if (index < parts.length - 1 && !stats.isDirectory()) throw modelError("entry_conflict", "Um componente não é diretório.");
       if (await realpath(absolutePath) !== absolutePath) throw modelError("entry_forbidden", "A localização da entrada mudou.");
     }
@@ -257,7 +200,7 @@ export class Directory {
    */
   async entry(relativePath: string): Promise<File | Directory> {
     const { stats } = await this.inspect(relativePath);
-    return stats.isDirectory() ? new Directory(this.#rootPath, this.#rootStats, relativePath, this.#privateStorage) : new File(this, relativePath);
+    return stats.isDirectory() ? new Directory(this.#rootPath, this.#rootStats, relativePath) : new File(this, relativePath);
   }
 
   /** Consulta metadados da pasta sem calcular seu tamanho recursivo.
@@ -308,7 +251,7 @@ export class Directory {
         const parent = parts.slice(0, index).join("/") || ".";
         const checked = await this.inspect(parent, "directory");
         try {
-          await mkdir(path.join(checked.absolutePath, parts[index]!), this.#privateStorage ? { mode: 0o700 } : {});
+          await mkdir(path.join(checked.absolutePath, parts[index]!));
           if (index === parts.length - 1) created = true;
         } catch (creationError) {
           if (errorCode(creationError) !== "EEXIST") throw creationError;
@@ -316,7 +259,7 @@ export class Directory {
         await this.inspect(current, "directory");
       }
     }
-    return { directory: new Directory(this.#rootPath, this.#rootStats, relativePath, this.#privateStorage), created };
+    return { directory: new Directory(this.#rootPath, this.#rootStats, relativePath), created };
   }
 
   /** Move uma entrada sob a mesma raiz, sem fallback de cópia seguido de exclusão.
@@ -365,7 +308,7 @@ export class Directory {
 
   /** Copia a árvore inteira em staging antes de publicar; nunca mescla diretórios.
    * @param targetPath Destino final completo sob a mesma raiz.
-   * @param staging Área privada no mesmo sistema de arquivos.
+   * @param staging Área auxiliar no mesmo sistema de arquivos.
    * @param signal Cancela a preparação e impede a publicação de uma árvore ainda incompleta.
    * @returns created igual a true após publicar a nova pasta; conflitos lançam erro.
    */

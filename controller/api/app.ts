@@ -40,7 +40,7 @@ const defaultLimits: Readonly<ApiLimits> = Object.freeze({
   jsonMaxBytes: 16_384, zipMaxEntries: 10_000, zipMaxBytes: 10_737_418_240,
 });
 // O backend compilado fica em dist/controller/api; os dados persistem na raiz do projeto.
-const repositoryDir = fileURLToPath(new URL("../../../", import.meta.url));
+const projectDir = fileURLToPath(new URL("../../../", import.meta.url));
 // Cada socket exige autenticação antes da primeira requisição; não há confiança por IP.
 const connections = new WeakMap<TLSSocket, Promise<void>>();
 
@@ -199,8 +199,8 @@ function backendOptions(argv: string[], env: NodeJS.ProcessEnv): BackendOptions 
     return path.normalize(text);
   };
   const root = parsed.values.root === undefined && env.PASSA_ROOT === undefined ? undefined : absolute("root");
-  const stateDir = absolute("state-dir", path.join(repositoryDir, "model", "peer"));
-  const stagingDir = absolute("staging-dir", path.join(repositoryDir, "tmp"));
+  const stateDir = absolute("state-dir", path.join(projectDir, "model", "peer"));
+  const stagingDir = absolute("staging-dir", path.join(projectDir, "tmp"));
   const host = value("host", "127.0.0.1");
   if (!isIP(host) || host.includes("%")) throw modelError("configuration_invalid", "--host exige um IP válido sem identificador de zona.");
   const mode = value("tls-mode", "self-signed");
@@ -253,7 +253,7 @@ export async function prepareSharedRoot(configuredRoot?: string): Promise<string
  * @returns Servidor aberto, que também pode ser encerrado pelo chamador local.
  */
 export async function startBackend(): Promise<Server> {
-  try { loadEnvFile(path.join(repositoryDir, ".env")); }
+  try { loadEnvFile(path.join(projectDir, ".env")); }
   catch (error) {
     if (errorCode(error) !== "ENOENT") throw modelError("configuration_invalid", "Não foi possível ler o arquivo .env do projeto.");
   }
@@ -268,11 +268,11 @@ export async function startBackend(): Promise<Server> {
     }
   }
   const root = await prepareSharedRoot(options.root);
-  await Directory.openPrivate(options.stagingDir, [root, options.stateDir], repositoryDir);
-  await peers.initialize({ stateDir: options.stateDir, rootDir: root, stagingDir: options.stagingDir, repositoryDir });
+  await Directory.openArea(options.stagingDir);
+  await peers.initialize({ stateDir: options.stateDir, rootDir: root, stagingDir: options.stagingDir });
   const identity = await peers.localIdentity();
   const known = await peers.listPeers();
-  await files.setSharedDirectory(root, { stateDir: options.stateDir, stagingDir: options.stagingDir, repositoryDir });
+  await files.setSharedDirectory(root, { stateDir: options.stateDir, stagingDir: options.stagingDir });
   // A raiz explícita precisa existir; a raiz padrão já foi criada com nome disponível.
   await realpath(root);
   const server = createServer({

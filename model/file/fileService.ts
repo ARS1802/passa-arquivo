@@ -16,7 +16,7 @@ let selectedPaths: (DirectoryBoundaries & { rootPath: string }) | undefined;
 /** Seleciona uma raiz após validá-la; em caso de erro, preserva a seleção anterior.
  * A seleção vive em memória e não cria um arquivo de configuração.
  * @param rootPath Caminho absoluto escolhido pela pessoa usuária.
- * @param boundaries Localizações privadas que não podem ser compartilhadas.
+ * @param boundaries Caminhos auxiliares da instalação.
  */
 export async function setSharedDirectory(rootPath: string, boundaries: DirectoryBoundaries): Promise<void> {
   sharedDirectory = await Directory.open(rootPath, boundaries);
@@ -81,10 +81,10 @@ export async function remove(path: string): Promise<void> {
 
 /** Prepara staging por meio de Directory, sem acesso direto ao disco pelo serviço.
  * @param paths Configuração capturada no início da operação.
- * @returns Diretório privado usado para preparar a operação.
+ * @returns Diretório usado para preparar a operação.
  */
 async function prepareStaging(paths: DirectoryBoundaries & { rootPath: string }): Promise<Directory> {
-  return Directory.openPrivate(paths.stagingDir, [paths.rootPath, paths.stateDir], paths.repositoryDir);
+  return Directory.openArea(paths.stagingDir);
 }
 
 /** Grava conteúdo local/recebido por partes, substituindo somente arquivos regulares.

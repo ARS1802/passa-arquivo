@@ -130,9 +130,9 @@ Falhas de configuração são separadas das respostas HTTP descritas em [Erros](
 ## Conferir um caminho não é abrir o arquivo
 
 `backendOptions`, em `app.ts`, confere o formato das opções locais. Depois,
-`Directory.open` e `Directory.openPrivate` examinam os caminhos físicos e as
+`Directory.open` e `Directory.openArea` examinam os caminhos físicos e as
 permissões necessárias. Por exemplo, uma raiz configurada com caminho absoluto
-válido ainda pode ser recusada por conter a pasta privada de estado.
+válido ainda pode ser recusada por se sobrepor à pasta de estado.
 
 Nas operações da API, os caminhos são relativos à raiz. `Directory.inspect`
 confere cada componente e recusa links internos antes do acesso. Uma validação
@@ -167,7 +167,7 @@ Os nomes da tabela são áreas de trabalho, não novas classes.
 | Transporte mTLS | Conferir os certificados e a prova de posse das chaves conforme o contexto de pareamento ou uso normal. |
 | HTTP e validação | Interpretar método, rota, parâmetros e corpo com Express e funções de validação existentes; representar respostas de forma consistente. |
 | Operações de arquivos | Coordenar consultas, envio, cópia, movimentação e exclusão dentro da raiz local. |
-| Acesso ao sistema operacional | Tratar caminhos, links e permissões POSIX. O armazenamento privado no Windows ainda é recusado por falta da proteção por ACL. |
+| Acesso ao sistema operacional | Tratar caminhos, links e permissões do sistema operacional. |
 | Configuração e erros | Conferir valores, descrever falhas sem segredos e separar erros TLS, HTTP e do processo local. |
 
 As regras de arquivos não precisarão conhecer `Request` ou `Response` do Express.
@@ -206,7 +206,7 @@ esses arquivos. A forma de coordenar requisições simultâneas da própria API 
 precisa ser definida; uma trava interna não controla alterações externas.
 Conteúdo lido durante uma edição pode não representar uma versão fixa do arquivo.
 
-Uploads e cópias deverão preparar o resultado em uma área privada antes de
+Uploads e cópias deverão preparar o resultado em uma área auxiliar antes de
 colocá-lo no destino. Operações recursivas não garantem desfazer tudo em caso de
 falha nem representar todos os arquivos no mesmo instante. Os limites ficam em
 [Arquivos e pastas](filesystem.md).

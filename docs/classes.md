@@ -109,7 +109,7 @@ de ZIP e não um leitor ou escritor de YAML. O índice dos peers usa CSV.
 ### Identidade e persistência local
 
 `peerService.initialize` recebe explicitamente os caminhos das áreas de estado,
-compartilhamento, staging e repositório. Na primeira execução, prepara a identidade
+compartilhamento e staging. Na primeira execução, prepara a identidade
 em `<stateDir>/tls/server.crt` e `<stateDir>/tls/server.key`. O certificado vale
 por 365 dias, permite uso como cliente e servidor TLS e tem um nome único que
 não depende do IP. Reinícios reutilizam esses arquivos. Identidade incompleta,
@@ -133,12 +133,10 @@ da confiança. `listPeers` e `findPeer` devolvem somente registros confiáveis.
 O CSV antigo é aceito e os peers já confiáveis são preservados. O fluxo de
 `paringService.ts` e suas funções locais estão em [Conexão](connection.md).
 
-`File` e `Directory` realizam a persistência. Os dados privados ficam fora da
+`File` e `Directory` realizam a persistência. O estado e o staging ficam fora da
 raiz compartilhada. Os padrões são `model/peer` para estado e `tmp` para staging;
-somente essas duas áreas específicas são permitidas dentro do repositório e seus
-dados de execução são ignorados pelo Git. A implementação atual verifica permissões
-POSIX; a abertura do armazenamento privado no Windows é recusada enquanto a
-proteção por ACL não estiver definida.
+essas áreas e seus dados de execução são ignorados pelo Git. A implementação
+verifica as regras de separação entre a raiz compartilhada, o estado e o staging.
 
 Essas funcionalidades têm implementação, mas sua validação ainda está incompleta.
 O estado das verificações está em [Testes](testing.md#estado-atual-do-model).

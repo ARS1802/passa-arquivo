@@ -96,9 +96,9 @@ export class File {
     await unlink(absolutePath);
   }
 
-  /** Prepara o conteúdo em área privada e só então publica no destino.
+  /** Prepara o conteúdo em uma área auxiliar e só então publica no destino.
    * @param content Bytes ou fonte assíncrona, sem processamento HTTP/multipart.
-   * @param staging Área privada no mesmo sistema de arquivos do destino.
+   * @param staging Área auxiliar no mesmo sistema de arquivos do destino.
    * @param overwrite Autoriza substituir somente arquivo regular.
    * @param maxBytes Limite conferido durante a leitura.
    * @param signal Cancelamento cooperativo, conferido também antes da publicação atômica.
@@ -182,7 +182,7 @@ export class File {
 
   /** Copia o conteúdo por partes para outro arquivo encapsulado.
    * @param target Destino completo, cujo pai precisa existir.
-   * @param staging Área privada de preparação.
+   * @param staging Área auxiliar de preparação.
    * @param overwrite Autoriza substituir arquivo regular.
    * @param signal Cancela a leitura e impede publicar uma cópia ainda em preparação.
    * @returns Indicação de criação ou substituição do arquivo de destino.

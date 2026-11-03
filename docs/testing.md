@@ -234,7 +234,7 @@ compartilhado da instalação real foi usado. A alteração de permissão foi so
 nessa pasta temporária e foi restaurada antes da remoção.
 
 Esses resultados não verificam uma GUI, dois computadores físicos, firewall,
-queda de energia durante publicação do CSV ou ACLs nativas do Windows. As
+queda de energia durante publicação do CSV ou controles nativos do Windows. As
 verificações anteriores do controle local e da descoberta permanecem registros
 parciais; a seção atual acrescenta as mensagens reais e a persistência.
 `npm test` continua sendo um placeholder e não foi apresentado como suíte aprovada.
@@ -356,7 +356,7 @@ em WSL não comprova suporte nativo a Windows.
 
 Além de pareamento e transferências, conferir nomes reservados, conflitos de
 maiúsculas, caracteres inválidos, caminhos longos, arquivos abertos, volumes,
-links, junctions/reparse points, permissões POSIX e ACLs. O controle de encerramento
+links, junctions/reparse points e regras de nomes. O controle de encerramento
 deve funcionar pelos mecanismos da aplicação e do sistema, sem depender apenas
 de sinais POSIX. Os requisitos estão em [Linux e Windows](platforms.md).
 

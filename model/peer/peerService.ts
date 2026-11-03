@@ -26,7 +26,6 @@ export interface PeerStorageOptions {
   stateDir: string;
   rootDir: string;
   stagingDir: string;
-  repositoryDir: string;
 }
 
 /** Estado privado do registro; consultas normais não expõem peers pendentes. */
@@ -53,8 +52,8 @@ function serialized<T>(operation: () => Promise<T>): Promise<T> {
   return result;
 }
 
-/** Obtém a área privada já inicializada.
- * @returns Diretório privado selecionado na inicialização.
+/** Obtém a área de estado já inicializada.
+ * @returns Diretório de estado selecionado na inicialização.
  */
 function state(): Directory {
   if (!storage) throw modelError("configuration_required", "Inicialize o armazenamento de peers antes da operação.");
@@ -268,11 +267,11 @@ async function generateIdentity(directory: Directory): Promise<void> {
  * Os registros ficam diretamente em 01 a 99, com index.csv e tls na mesma raiz.
  * Arquivos de código nessa raiz não são registros e não são lidos ou removidos.
  * @param options Caminhos privados e compartilhados fornecidos pela inicialização local.
- * @returns Somente o certificado público; a chave permanece no armazenamento privado.
+ * @returns Somente o certificado público; a chave permanece no diretório de estado.
  */
 export function initialize(options: PeerStorageOptions): Promise<{ certificatePem: string }> {
   return serialized(async () => {
-    const directory = await Directory.openPrivate(options.stateDir, [options.rootDir, options.stagingDir], options.repositoryDir);
+    const directory = await Directory.openArea(options.stateDir);
     const names = await directory.childNames();
     if (names.includes("peers")) {
       throw modelError("peer_store_migration_required", "Há armazenamento no formato anterior; migre os registros antes de iniciar.");

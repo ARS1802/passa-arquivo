@@ -57,7 +57,7 @@ concluída. A sessão identifica as repetições. O iniciador pode repetir a con
 a janela estiver disponível; a [documentação do fluxo](connection.md) explica
 o caso em que a última resposta se perde.
 
-O armazenamento privado atual usa `index.csv` e diretórios de `01` a `99`, cada
+O armazenamento de estado atual usa `index.csv` e diretórios de `01` a `99`, cada
 um com `certificado.cert`. O índice relaciona `directory`, `displayName`,
 `ipAddress`, `firstConnectedAt`, `lastConnectedAt`, `pairingId` e `status`. O estado
 padrão fica em `model/peer`, separado da raiz compartilhada. O estado `pending`

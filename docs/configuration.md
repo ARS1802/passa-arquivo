@@ -80,8 +80,8 @@ consegue acessar `/health`, pois a rota exige certificado de peer confiável.
 | `PASSA_HOST` / `--host` | `127.0.0.1` | IP literal de escuta, IPv4 ou IPv6, sem DNS nem identificador de zona. `0.0.0.0` permite escuta nas interfaces IPv4; isso não dispensa mTLS. |
 | `PASSA_PORT` / `--port` | `8443` | Porta HTTPS de 1 a 65535. |
 | `PASSA_ROOT` / `--root` | Nova pasta no diretório do usuário | Quando explícita, exige caminho absoluto de uma pasta existente. Sem valor configurado, cria `passa-arquivo`, `passa-arquivo(2)`, etc., usando o primeiro nome livre sem alterar pastas existentes. |
-| `PASSA_STATE_DIR` / `--state-dir` | `<repositório>/model/peer` | Área privada da identidade, índice CSV e pastas de peers `01` a `99`. |
-| `PASSA_STAGING_DIR` / `--staging-dir` | `<repositório>/tmp` | Área privada para preparar uploads e cópias; permanece entre reinícios. |
+| `PASSA_STATE_DIR` / `--state-dir` | `<projeto>/model/peer` | Área de estado da identidade, índice CSV e pastas de peers `01` a `99`. |
+| `PASSA_STAGING_DIR` / `--staging-dir` | `<projeto>/tmp` | Área auxiliar para preparar uploads e cópias; permanece entre reinícios. |
 
 Por exemplo, no Linux, uma raiz automática pode ser
 `/home/arthur/passa-arquivo`. Para reutilizar uma raiz já existente, informe
@@ -127,14 +127,8 @@ Eles não garantem, sozinhos, disponibilidade de memória, disco ou processament
 
 Os caminhos locais são absolutos e seguem o sistema operacional. Isso difere
 dos caminhos relativos usados nas rotas da API. A inicialização resolve a
-localização física e recusa sobreposição da raiz com o repositório, o estado
-ou o staging. Estado e staging também não podem conter um ao outro.
-
-Somente `model/peer` e `tmp` podem ser usados como áreas privadas dentro do
-repositório. No Linux, essas áreas são preparadas com permissão `0700` e os
-arquivos privados com `0600`. Outros diretórios privados existentes precisam
-ter as permissões e o dono conferidos pelo model. No Windows, a abertura do
-armazenamento privado é recusada enquanto a proteção por ACL não existir.
+localização física da raiz, do estado e do staging. Essas áreas podem coincidir
+quando a configuração exigir.
 Veja [Arquivos e pastas](filesystem.md) e [Linux e Windows](platforms.md).
 
 ## Opções ainda sem integração

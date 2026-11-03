@@ -14,13 +14,13 @@ Na API, um caminho será sempre relativo à pasta compartilhada e usará `/`:
 No disco, os caminhos seguem o sistema local. A pasta compartilhada poderá ser
 `/home/ana/Compartilhado` no Linux ou `C:\Users\Ana\Compartilhado` no Windows.
 Esses são exemplos de caminhos nativos de cada sistema. O controller usa as
-regras de caminho absoluto do ambiente em que executa; isso não significa que
-o armazenamento privado no Windows já funcione.
+regras de caminho absoluto do ambiente em que executa; as áreas de estado e
+staging são configuradas independentemente da raiz compartilhada.
 
 O servidor deverá conferir cada segmento antes de convertê-lo para o caminho
 local. Receber uma URL com `/` não torna seguro concatená-la à raiz. Caminhos
 absolutos, `..`, nomes de dispositivos, namespaces especiais e tentativas de
-acessar áreas privadas precisam ser recusados.
+acessar áreas reservadas precisam ser recusados.
 
 ## Diferenças que afetam os arquivos
 
@@ -38,21 +38,14 @@ As restrições de nomes e namespaces estão descritas pela
 A política exata de portabilidade de nomes ainda precisa ser fechada; falhas não
 devem ser escondidas por alterações automáticas no nome escolhido.
 
-## Dados privados
+## Dados locais
 
 Chave privada, certificados conhecidos, registros de peers e arquivos temporários
 ficam fora da pasta compartilhada. Os padrões são `model/peer` e `tmp`, duas áreas
-privadas permitidas dentro do repositório; seus dados de execução são ignorados
-pelo Git. Também podem ser configuradas áreas privadas fora do repositório.
+auxiliares; seus dados de execução são ignorados pelo Git. Também podem ser
+configuradas áreas fora do projeto.
 
-No Linux, permissões como `0600` para arquivos e `0700` para pastas podem limitar
-o acesso ao dono. No Windows, essa proteção exige listas de controle de acesso
-(ACLs) apropriadas. Aplicar somente `chmod` não cria a mesma proteção: a API do
-Node.js tem limitações específicas de permissões no Windows.
-[Documentação de arquivos do Node.js](https://nodejs.org/api/fs.html#fschmodpath-mode-callback).
-
-O model confere dono e permissões POSIX. No Windows, a abertura da área privada
-é recusada enquanto as ACLs não estiverem implementadas. A instalação deverá
+O model confere os tipos, os links e a localização real das entradas. A instalação deverá
 preparar apenas os próprios dados, sem alterar
 firewall, permissões de outras pastas ou certificados confiáveis do sistema.
 

@@ -170,7 +170,7 @@ inválidos, conflitos de destino e limites de transferência continuam sujeitos
 às [regras de arquivos](filesystem.md). Arquivos recebidos não serão executados
 pelo servidor.
 
-O armazenamento privado deve usar as proteções de cada sistema; permissões
-POSIX não substituem ACLs do Windows. Veja [Linux e Windows](platforms.md).
+As áreas de estado e staging devem permanecer separadas da raiz compartilhada.
+Veja [Linux e Windows](platforms.md).
 A aplicação não instalará confiança global nos clientes, não mudará o firewall
 nem encerrará processos para liberar portas.

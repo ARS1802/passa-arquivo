@@ -143,11 +143,9 @@ real e não podem ser alcançados por links ou outros caminhos configurados pelo
 administrador. Staging é a área temporária usada para preparar arquivos antes
 de colocá-los no destino.
 
-A verificação física de sobreposição com o repositório e as pastas privadas
-considera os dois sentidos: tanto uma pasta
-privada dentro da raiz quanto a raiz dentro de uma pasta privada podem expor
-arquivos internos. Uma lista de nomes ocultos não oferece essa proteção. As
-restrições das opções estão no [guia de configuração](configuration.md).
+A raiz, o estado e o staging podem coincidir conforme a configuração. A API
+continua limitada aos caminhos relativos da raiz selecionada. As restrições
+das opções estão no [guia de configuração](configuration.md).
 
 ## O que cada operação faz
 
@@ -208,8 +206,7 @@ o apaga antes da publicação. Isso não congela o conteúdo nem desfaz ediçõe
 realizadas por outros programas enquanto a operação estava em andamento.
 
 Staging fica fora da raiz e precisa estar no mesmo sistema de arquivos do
-destino. No Linux, usa pastas `0700` e arquivos `0600`. O armazenamento privado
-no Windows é recusado enquanto a proteção por ACL não estiver implementada.
+destino. O estado e o staging usam diretórios separados da raiz compartilhada.
 Cada operação recebe uma pasta exclusiva, criada com `mkdtemp`. Antes de
 publicar um arquivo, `File.write` confere novamente o destino e seu pai. Uma
 cópia de pasta é montada inteira em staging antes de receber o nome final.
