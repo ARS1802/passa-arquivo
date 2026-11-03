@@ -6,7 +6,16 @@
  * dos arquivos, sem permitir sair da raiz.
  */
 import { type Stats } from "node:fs";
-import { chmod, lstat, mkdir, mkdtemp, readdir, realpath, rename, rmdir } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  realpath,
+  rename,
+  rmdir,
+} from "node:fs/promises";
 import { isUtf8 } from "node:buffer";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
@@ -103,9 +112,24 @@ let windowsQueue: Promise<void> = Promise.resolve();
  * @returns Processo privado e leitor das respostas, sem expor mensagens internas.
  */
 function startWindowsSecurity() {
-  const executable = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  const child = spawn(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand",
-    Buffer.from(windowsSecurityScript, "utf16le").toString("base64")], { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
+  const executable = path.join(
+    process.env.SystemRoot ?? "C:\\Windows",
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  );
+  const child = spawn(
+    executable,
+    [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-EncodedCommand",
+      Buffer.from(windowsSecurityScript, "utf16le").toString("base64"),
+    ],
+    { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] },
+  );
   const reader = createInterface({ input: child.stdout, crlfDelay: Infinity });
   reader.on("error", () => reader.close());
   child.on("error", () => reader.close());
@@ -120,7 +144,9 @@ function startWindowsSecurity() {
 /** Encerra somente o processo auxiliar criado por esta instância.
  * @param worker Processo que terminou, falhou ou ficou inativo.
  */
-function stopWindowsSecurity(worker: ReturnType<typeof startWindowsSecurity>): void {
+function stopWindowsSecurity(
+  worker: ReturnType<typeof startWindowsSecurity>,
+): void {
   if (windowsWorker === worker) windowsWorker = undefined;
   worker.reader.close();
   worker.child.kill();
@@ -133,31 +159,59 @@ function stopWindowsSecurity(worker: ReturnType<typeof startWindowsSecurity>): v
  * @param managed Permite ajustar a ACL somente de model/peer ou tmp, se pertencem ao usuário.
  * @throws Recusa acesso ou indisponibilidade do recurso nativo; não há fallback permissivo.
  */
-function windowsFileAccess(paths: string[], privateStorage: boolean, prepare = false, managed = false): Promise<void> {
+function windowsFileAccess(
+  paths: string[],
+  privateStorage: boolean,
+  prepare = false,
+  managed = false,
+): Promise<void> {
   const operation = windowsQueue.then(async () => {
-    const worker = windowsWorker ??= startWindowsSecurity();
+    const worker = (windowsWorker ??= startWindowsSecurity());
     if (windowsIdle) clearTimeout(windowsIdle);
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const response = worker.answers.next();
-      worker.child.stdin.write(JSON.stringify({ paths, privateStorage, prepare, managed }) + "\n");
+      worker.child.stdin.write(
+        JSON.stringify({ paths, privateStorage, prepare, managed }) + "\n",
+      );
       const answer = await Promise.race([
         response,
         new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(() => reject(modelError("private_storage_unavailable", "A conferência de segurança do Windows excedeu o prazo.")), 10_000);
+          timer = setTimeout(
+            () =>
+              reject(
+                modelError(
+                  "private_storage_unavailable",
+                  "A conferência de segurança do Windows excedeu o prazo.",
+                ),
+              ),
+            10_000,
+          );
         }),
       ]);
-      if (answer.done) throw modelError("private_storage_unavailable", "O recurso de segurança do Windows não está disponível.");
-      if (answer.value !== "ok") throw modelError("entry_forbidden", "O caminho, o dono ou as permissões do Windows não permitem esta operação.");
+      if (answer.done)
+        throw modelError(
+          "private_storage_unavailable",
+          "O recurso de segurança do Windows não está disponível.",
+        );
+      if (answer.value !== "ok")
+        throw modelError(
+          "entry_forbidden",
+          "O caminho, o dono ou as permissões do Windows não permitem esta operação.",
+        );
     } catch (error) {
       stopWindowsSecurity(worker);
       throw error;
     } finally {
       if (timer) clearTimeout(timer);
-      if (windowsWorker === worker) windowsIdle = setTimeout(() => stopWindowsSecurity(worker), 1_000);
+      if (windowsWorker === worker)
+        windowsIdle = setTimeout(() => stopWindowsSecurity(worker), 1_000);
     }
   });
-  windowsQueue = operation.then(() => undefined, () => undefined);
+  windowsQueue = operation.then(
+    () => undefined,
+    () => undefined,
+  );
   return operation;
 }
 
@@ -186,7 +240,12 @@ function samePath(first: string, second: string): boolean {
  */
 export function containsPath(parent: string, candidate: string): boolean {
   const relative = path.relative(parent, candidate);
-  return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`));
+  return (
+    relative === "" ||
+    (!path.isAbsolute(relative) &&
+      relative !== ".." &&
+      !relative.startsWith(`..${path.sep}`))
+  );
 }
 
 /** Resolve a parte existente de uma configuração, permitindo diretórios privados ainda ausentes.
@@ -194,16 +253,27 @@ export function containsPath(parent: string, candidate: string): boolean {
  * @returns Caminho absoluto com os componentes existentes resolvidos no disco.
  */
 export async function configuredPath(value: string): Promise<string> {
-  if (typeof value !== "string" || !path.isAbsolute(value) || value.includes("\0")) {
-    throw modelError("invalid_path", "A configuração exige um caminho absoluto válido.");
+  if (
+    typeof value !== "string" ||
+    !path.isAbsolute(value) ||
+    value.includes("\0")
+  ) {
+    throw modelError(
+      "invalid_path",
+      "A configuração exige um caminho absoluto válido.",
+    );
   }
-  try { return await realpath(value); }
-  catch (error) {
+  try {
+    return await realpath(value);
+  } catch (error) {
     if (errorCode(error) !== "ENOENT") throw error;
     // Um link quebrado não pode ser tratado como uma pasta nova.
     try {
       await lstat(value);
-      throw modelError("entry_forbidden", "A configuração contém um link inválido.");
+      throw modelError(
+        "entry_forbidden",
+        "A configuração contém um link inválido.",
+      );
     } catch (inspectionError) {
       if (errorCode(inspectionError) !== "ENOENT") throw inspectionError;
     }
@@ -217,21 +287,40 @@ export async function configuredPath(value: string): Promise<string> {
  * @param value Caminho relativo à raiz; a própria raiz é representada por ponto.
  */
 export function validatePath(value: string): void {
-  if (typeof value !== "string") throw modelError("validation_failed", "Informe um caminho textual.");
-  if (path.posix.isAbsolute(value) || path.win32.isAbsolute(value) || /^[A-Za-z]:/.test(value)
-    || value.split(/[\\/]/).includes("..")) {
-    throw modelError("path_forbidden", "O caminho precisa permanecer dentro da raiz.");
+  if (typeof value !== "string")
+    throw modelError("validation_failed", "Informe um caminho textual.");
+  if (
+    path.posix.isAbsolute(value) ||
+    path.win32.isAbsolute(value) ||
+    /^[A-Za-z]:/.test(value) ||
+    value.split(/[\\/]/).includes("..")
+  ) {
+    throw modelError(
+      "path_forbidden",
+      "O caminho precisa permanecer dentro da raiz.",
+    );
   }
   const parts = value.split("/");
-  if (!value || value.includes("\0") || value.includes("\\") || !value.isWellFormed()
-    || (value !== "." && parts.some(part => part === "" || part === "."))) {
+  if (
+    !value ||
+    value.includes("\0") ||
+    value.includes("\\") ||
+    !value.isWellFormed() ||
+    (value !== "." && parts.some((part) => part === "" || part === "."))
+  ) {
     throw modelError("invalid_path", "O caminho tem um formato inválido.");
   }
   if (process.platform !== "win32" || value === ".") return;
   for (const part of parts) {
-    if (/[<>:"|?*\x00-\x1f]/.test(part) || /[. ]$/.test(part)
-      || /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(part)) {
-      throw modelError("invalid_path", "O nome não é permitido neste sistema operacional.");
+    if (
+      /[<>:"|?*\x00-\x1f]/.test(part) ||
+      /[. ]$/.test(part) ||
+      /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(part)
+    ) {
+      throw modelError(
+        "invalid_path",
+        "O nome não é permitido neste sistema operacional.",
+      );
     }
   }
 }
@@ -251,7 +340,12 @@ export class Directory {
    * @param relativePath Caminho relativo da pasta representada.
    * @param privateStorage Indica armazenamento privado com permissões restritas.
    */
-  private constructor(rootPath: string, rootStats: Stats, relativePath = ".", privateStorage = false) {
+  private constructor(
+    rootPath: string,
+    rootStats: Stats,
+    relativePath = ".",
+    privateStorage = false,
+  ) {
     this.#rootPath = rootPath;
     this.#rootStats = rootStats;
     this.#path = relativePath;
@@ -263,14 +357,28 @@ export class Directory {
    * @param boundaries Caminhos absolutos das áreas que não podem ser compartilhadas.
    * @returns Raiz validada para acesso aos arquivos compartilhados.
    */
-  static async open(rootPath: string, boundaries: DirectoryBoundaries): Promise<Directory> {
+  static async open(
+    rootPath: string,
+    boundaries: DirectoryBoundaries,
+  ): Promise<Directory> {
     const root = await configuredPath(rootPath);
     const stats = await lstat(root);
-    if (!stats.isDirectory()) throw modelError("entry_conflict", "A raiz precisa ser uma pasta existente.");
-    for (const value of [boundaries.stateDir, boundaries.stagingDir, boundaries.repositoryDir]) {
+    if (!stats.isDirectory())
+      throw modelError(
+        "entry_conflict",
+        "A raiz precisa ser uma pasta existente.",
+      );
+    for (const value of [
+      boundaries.stateDir,
+      boundaries.stagingDir,
+      boundaries.repositoryDir,
+    ]) {
       const forbidden = await configuredPath(value);
       if (containsPath(root, forbidden) || containsPath(forbidden, root)) {
-        throw modelError("path_forbidden", "A pasta compartilhada se sobrepõe a uma área privada.");
+        throw modelError(
+          "path_forbidden",
+          "A pasta compartilhada se sobrepõe a uma área privada.",
+        );
       }
     }
     if (process.platform === "win32") await windowsFileAccess([root], false);
@@ -285,34 +393,56 @@ export class Directory {
    * Outros locais existentes mantêm suas permissões e precisam passar na conferência.
    * @returns Diretório privado com separação e permissões conferidas.
    */
-  static async openPrivate(rootPath: string, excludedPaths: readonly string[], repositoryDir?: string): Promise<Directory> {
+  static async openPrivate(
+    rootPath: string,
+    excludedPaths: readonly string[],
+    repositoryDir?: string,
+  ): Promise<Directory> {
     const root = await configuredPath(rootPath);
     let managed = false;
     if (repositoryDir !== undefined) {
       const repository = await configuredPath(repositoryDir);
       const expectedState = path.join(repository, "model", "peer");
       const expectedStaging = path.join(repository, "tmp");
-      managed = samePath(root, expectedState) || samePath(root, expectedStaging);
-      if (!managed && (containsPath(root, repository) || containsPath(repository, root))) {
-        throw modelError("path_forbidden", "O armazenamento privado não pode ocupar esta área do repositório.");
-      }
+      managed =
+        samePath(root, expectedState) || samePath(root, expectedStaging);
+      // if (!managed && (containsPath(root, repository) || containsPath(repository, root))) {
+      //   throw modelError("path_forbidden", "O armazenamento privado não pode ocupar esta área do repositório.");
+      // }
     }
     for (const value of excludedPaths) {
       const excluded = await configuredPath(value);
       if (containsPath(root, excluded) || containsPath(excluded, root)) {
-        throw modelError("path_forbidden", "O armazenamento privado se sobrepõe a uma área protegida.");
+        throw modelError(
+          "path_forbidden",
+          "O armazenamento privado se sobrepõe a uma área protegida.",
+        );
       }
     }
-    if (process.platform === "win32") await windowsFileAccess([root], true, true, managed);
+    if (process.platform === "win32")
+      await windowsFileAccess([root], true, true, managed);
     else await mkdir(root, { recursive: true, mode: 0o700 });
     let stats = await lstat(root);
-    if (process.platform !== "win32" && managed && stats.isDirectory() && !stats.isSymbolicLink() && (!process.getuid || stats.uid === process.getuid())) {
+    if (
+      process.platform !== "win32" &&
+      managed &&
+      stats.isDirectory() &&
+      !stats.isSymbolicLink() &&
+      (!process.getuid || stats.uid === process.getuid())
+    ) {
       await chmod(root, 0o700);
       stats = await lstat(root);
     }
-    if (!stats.isDirectory() || stats.isSymbolicLink() || !samePath(await realpath(root), root)
-      || (process.platform !== "win32" && !hasPrivatePosixPermissions(stats))) {
-      throw modelError("entry_forbidden", "O armazenamento privado precisa ser uma pasta acessível somente ao dono.");
+    if (
+      !stats.isDirectory() ||
+      stats.isSymbolicLink() ||
+      !samePath(await realpath(root), root) ||
+      (process.platform !== "win32" && !hasPrivatePosixPermissions(stats))
+    ) {
+      throw modelError(
+        "entry_forbidden",
+        "O armazenamento privado precisa ser uma pasta acessível somente ao dono.",
+      );
     }
     return new Directory(root, stats, ".", true);
   }
@@ -321,10 +451,17 @@ export class Directory {
    * @returns Diretório exclusivo cuja limpeza cabe à operação que o criou.
    */
   async temporary(): Promise<Directory> {
-    if (!this.#privateStorage) throw modelError("entry_forbidden", "Temporários exigem armazenamento privado.");
+    if (!this.#privateStorage)
+      throw modelError(
+        "entry_forbidden",
+        "Temporários exigem armazenamento privado.",
+      );
     const { absolutePath } = await this.inspect(this.path, "directory");
     const temporaryPath = await mkdtemp(path.join(absolutePath, ".operation-"));
-    const relativePath = path.relative(this.#rootPath, temporaryPath).split(path.sep).join("/");
+    const relativePath = path
+      .relative(this.#rootPath, temporaryPath)
+      .split(path.sep)
+      .join("/");
     return new Directory(this.#rootPath, this.#rootStats, relativePath, true);
   }
 
@@ -334,14 +471,17 @@ export class Directory {
    */
   file(relativePath: string): File {
     validatePath(relativePath);
-    if (relativePath === ".") throw modelError("entry_conflict", "A raiz não é um arquivo.");
+    if (relativePath === ".")
+      throw modelError("entry_conflict", "A raiz não é um arquivo.");
     return new File(this, relativePath);
   }
 
   /** Caminho relativo da pasta representada.
    * @returns Caminho da pasta relativo à raiz.
    */
-  get path(): string { return this.#path; }
+  get path(): string {
+    return this.#path;
+  }
 
   /** Lê nomes de filhos sem abrir seu conteúdo nem conferir permissões individuais.
    * @internal O registro de peers filtra seus dados para não inspecionar arquivos de código.
@@ -351,8 +491,12 @@ export class Directory {
   async childNames(): Promise<string[]> {
     const { absolutePath } = await this.inspect(this.path, "directory");
     const names = await readdir(absolutePath, { encoding: "buffer" });
-    return names.map(bytes => {
-      if (!isUtf8(bytes)) throw modelError("entry_forbidden", "Um nome não pode ser representado em UTF-8.");
+    return names.map((bytes) => {
+      if (!isUtf8(bytes))
+        throw modelError(
+          "entry_forbidden",
+          "Um nome não pode ser representado em UTF-8.",
+        );
       return bytes.toString("utf8");
     });
   }
@@ -363,13 +507,23 @@ export class Directory {
    */
   async removeEmptyChild(name: string): Promise<void> {
     validatePath(name);
-    if (name === "." || name.includes("/")) throw modelError("invalid_path", "Informe um único nome de pasta filha.");
+    if (name === "." || name.includes("/"))
+      throw modelError("invalid_path", "Informe um único nome de pasta filha.");
     const parent = await this.inspect(this.path, "directory");
     const child = path.join(parent.absolutePath, name);
     const stats = await lstat(child);
-    if (!stats.isDirectory() || stats.isSymbolicLink()) throw modelError("entry_forbidden", "A entrada não é uma pasta comum.");
-    if (stats.dev !== this.#rootStats.dev) throw modelError("cross_device_operation", "A pasta pertence a outro sistema de arquivos.");
-    if (process.platform === "win32") await windowsFileAccess([this.#rootPath, parent.absolutePath, child], this.#privateStorage);
+    if (!stats.isDirectory() || stats.isSymbolicLink())
+      throw modelError("entry_forbidden", "A entrada não é uma pasta comum.");
+    if (stats.dev !== this.#rootStats.dev)
+      throw modelError(
+        "cross_device_operation",
+        "A pasta pertence a outro sistema de arquivos.",
+      );
+    if (process.platform === "win32")
+      await windowsFileAccess(
+        [this.#rootPath, parent.absolutePath, child],
+        this.#privateStorage,
+      );
     await rmdir(child);
   }
 
@@ -379,42 +533,90 @@ export class Directory {
    * @param expected Tipo exigido, quando aplicável.
    * @returns Caminho absoluto e metadados internos após conferir cada componente.
    */
-  async inspect(relativePath: string, expected?: "file" | "directory"): Promise<{ absolutePath: string; stats: Stats }> {
+  async inspect(
+    relativePath: string,
+    expected?: "file" | "directory",
+  ): Promise<{ absolutePath: string; stats: Stats }> {
     validatePath(relativePath);
     let absolutePath = this.#rootPath;
     let stats = await lstat(absolutePath);
-    if (!stats.isDirectory() || stats.isSymbolicLink() || stats.dev !== this.#rootStats.dev || stats.ino !== this.#rootStats.ino
-      || !samePath(await realpath(absolutePath), this.#rootPath)) {
-      throw modelError("entry_forbidden", "A raiz compartilhada mudou; selecione-a novamente.");
+    if (
+      !stats.isDirectory() ||
+      stats.isSymbolicLink() ||
+      stats.dev !== this.#rootStats.dev ||
+      stats.ino !== this.#rootStats.ino ||
+      !samePath(await realpath(absolutePath), this.#rootPath)
+    ) {
+      throw modelError(
+        "entry_forbidden",
+        "A raiz compartilhada mudou; selecione-a novamente.",
+      );
     }
-    if (process.platform !== "win32" && this.#privateStorage && !hasPrivatePosixPermissions(stats)) {
-      throw modelError("entry_forbidden", "As permissões do armazenamento privado mudaram.");
+    if (
+      process.platform !== "win32" &&
+      this.#privateStorage &&
+      !hasPrivatePosixPermissions(stats)
+    ) {
+      throw modelError(
+        "entry_forbidden",
+        "As permissões do armazenamento privado mudaram.",
+      );
     }
     const parts = relativePath === "." ? [] : relativePath.split("/");
     const inspectedPaths = [absolutePath];
     for (const [index, part] of parts.entries()) {
       absolutePath = path.join(absolutePath, part);
-      try { stats = await lstat(absolutePath); }
-      catch (error) {
-        if (errorCode(error) === "ENOENT") throw modelError("entry_not_found", "A entrada não existe.");
-        if (errorCode(error) === "ENOTDIR") throw modelError("entry_conflict", "Um componente não é diretório.");
+      try {
+        stats = await lstat(absolutePath);
+      } catch (error) {
+        if (errorCode(error) === "ENOENT")
+          throw modelError("entry_not_found", "A entrada não existe.");
+        if (errorCode(error) === "ENOTDIR")
+          throw modelError("entry_conflict", "Um componente não é diretório.");
         throw error;
       }
-      if (stats.isSymbolicLink() || (!stats.isFile() && !stats.isDirectory()) || (stats.isFile() && stats.nlink > 1)) {
-        throw modelError("entry_forbidden", "Links e entradas especiais não são permitidos.");
+      if (
+        stats.isSymbolicLink() ||
+        (!stats.isFile() && !stats.isDirectory()) ||
+        (stats.isFile() && stats.nlink > 1)
+      ) {
+        throw modelError(
+          "entry_forbidden",
+          "Links e entradas especiais não são permitidos.",
+        );
       }
-      if (stats.dev !== this.#rootStats.dev) throw modelError("cross_device_operation", "A entrada pertence a outro sistema de arquivos.");
-      if (process.platform !== "win32" && this.#privateStorage && !hasPrivatePosixPermissions(stats)) {
-        throw modelError("entry_forbidden", "Uma entrada privada tem permissões incompatíveis.");
+      if (stats.dev !== this.#rootStats.dev)
+        throw modelError(
+          "cross_device_operation",
+          "A entrada pertence a outro sistema de arquivos.",
+        );
+      if (
+        process.platform !== "win32" &&
+        this.#privateStorage &&
+        !hasPrivatePosixPermissions(stats)
+      ) {
+        throw modelError(
+          "entry_forbidden",
+          "Uma entrada privada tem permissões incompatíveis.",
+        );
       }
-      if (index < parts.length - 1 && !stats.isDirectory()) throw modelError("entry_conflict", "Um componente não é diretório.");
-      if (!samePath(await realpath(absolutePath), absolutePath)) throw modelError("entry_forbidden", "A localização da entrada mudou.");
+      if (index < parts.length - 1 && !stats.isDirectory())
+        throw modelError("entry_conflict", "Um componente não é diretório.");
+      if (!samePath(await realpath(absolutePath), absolutePath))
+        throw modelError("entry_forbidden", "A localização da entrada mudou.");
       inspectedPaths.push(absolutePath);
     }
-    if ((expected === "file" && !stats.isFile()) || (expected === "directory" && !stats.isDirectory())) {
-      throw modelError("entry_conflict", "O tipo da entrada é incompatível com a operação.");
+    if (
+      (expected === "file" && !stats.isFile()) ||
+      (expected === "directory" && !stats.isDirectory())
+    ) {
+      throw modelError(
+        "entry_conflict",
+        "O tipo da entrada é incompatível com a operação.",
+      );
     }
-    if (process.platform === "win32") await windowsFileAccess(inspectedPaths, this.#privateStorage);
+    if (process.platform === "win32")
+      await windowsFileAccess(inspectedPaths, this.#privateStorage);
     return { absolutePath, stats };
   }
 
@@ -424,7 +626,14 @@ export class Directory {
    */
   async entry(relativePath: string): Promise<File | Directory> {
     const { stats } = await this.inspect(relativePath);
-    return stats.isDirectory() ? new Directory(this.#rootPath, this.#rootStats, relativePath, this.#privateStorage) : new File(this, relativePath);
+    return stats.isDirectory()
+      ? new Directory(
+          this.#rootPath,
+          this.#rootStats,
+          relativePath,
+          this.#privateStorage,
+        )
+      : new File(this, relativePath);
   }
 
   /** Consulta metadados da pasta sem calcular seu tamanho recursivo.
@@ -432,7 +641,13 @@ export class Directory {
    */
   async metadata(): Promise<EntryMetadata> {
     const { stats } = await this.inspect(this.path, "directory");
-    return { name: path.posix.basename(this.path), path: this.path, type: "directory", size: null, modifiedAt: stats.mtime.toISOString() };
+    return {
+      name: path.posix.basename(this.path),
+      path: this.path,
+      type: "directory",
+      size: null,
+      modifiedAt: stats.mtime.toISOString(),
+    };
   }
 
   /** Lista filhos imediatos, com pastas primeiro e nomes ordenados pelos bytes UTF-8.
@@ -442,7 +657,9 @@ export class Directory {
   async list(): Promise<Array<File | Directory>> {
     const entries: Array<File | Directory> = [];
     for (const name of await this.childNames()) {
-      entries.push(await this.entry(this.path === "." ? name : `${this.path}/${name}`));
+      entries.push(
+        await this.entry(this.path === "." ? name : `${this.path}/${name}`),
+      );
     }
     /** Compara o tipo primeiro e depois o nome, sem depender do idioma do sistema.
      * @param first Primeira entrada da comparação.
@@ -450,8 +667,10 @@ export class Directory {
      * @returns Valor negativo, zero ou positivo conforme a ordem das duas entradas.
      */
     return entries.sort((first, second) => {
-      if (first instanceof Directory && !(second instanceof Directory)) return -1;
-      if (second instanceof Directory && !(first instanceof Directory)) return 1;
+      if (first instanceof Directory && !(second instanceof Directory))
+        return -1;
+      if (second instanceof Directory && !(first instanceof Directory))
+        return 1;
       const firstName = path.posix.basename(first.path);
       const secondName = path.posix.basename(second.path);
       return Buffer.compare(Buffer.from(firstName), Buffer.from(secondName));
@@ -462,20 +681,26 @@ export class Directory {
    * @param relativePath Caminho completo relativo à raiz.
    * @returns Pasta resultante e indicação de criação do destino final.
    */
-  async create(relativePath: string): Promise<{ directory: Directory; created: boolean }> {
+  async create(
+    relativePath: string,
+  ): Promise<{ directory: Directory; created: boolean }> {
     validatePath(relativePath);
     let created = false;
     const parts = relativePath === "." ? [] : relativePath.split("/");
     await this.inspect(".", "directory");
     for (let index = 0; index < parts.length; index++) {
       const current = parts.slice(0, index + 1).join("/");
-      try { await this.inspect(current, "directory"); }
-      catch (error) {
+      try {
+        await this.inspect(current, "directory");
+      } catch (error) {
         if (errorCode(error) !== "entry_not_found") throw error;
         const parent = path.posix.dirname(current);
         const checked = await this.inspect(parent, "directory");
         try {
-          await mkdir(path.join(checked.absolutePath, parts[index]!), this.#privateStorage ? { mode: 0o700 } : {});
+          await mkdir(
+            path.join(checked.absolutePath, parts[index]!),
+            this.#privateStorage ? { mode: 0o700 } : {},
+          );
           if (index === parts.length - 1) created = true;
         } catch (creationError) {
           if (errorCode(creationError) !== "EEXIST") throw creationError;
@@ -483,7 +708,15 @@ export class Directory {
         await this.inspect(current, "directory");
       }
     }
-    return { directory: new Directory(this.#rootPath, this.#rootStats, relativePath, this.#privateStorage), created };
+    return {
+      directory: new Directory(
+        this.#rootPath,
+        this.#rootStats,
+        relativePath,
+        this.#privateStorage,
+      ),
+      created,
+    };
   }
 
   /** Move uma entrada sob a mesma raiz, sem fallback de cópia seguido de exclusão.
@@ -493,29 +726,56 @@ export class Directory {
    * @param overwrite Permite somente substituir arquivo regular por arquivo regular.
    * @returns Entrada encapsulada no destino após a movimentação.
    */
-  async relocate(sourcePath: string, targetPath: string, overwrite: boolean): Promise<File | Directory> {
+  async relocate(
+    sourcePath: string,
+    targetPath: string,
+    overwrite: boolean,
+  ): Promise<File | Directory> {
     validatePath(targetPath);
-    if (typeof overwrite !== "boolean") throw modelError("validation_failed", "overwrite precisa ser booleano.");
-    if (sourcePath === ".") throw modelError("entry_forbidden", "A raiz não pode ser movida.");
+    if (typeof overwrite !== "boolean")
+      throw modelError("validation_failed", "overwrite precisa ser booleano.");
+    if (sourcePath === ".")
+      throw modelError("entry_forbidden", "A raiz não pode ser movida.");
     const source = await this.inspect(sourcePath);
     if (samePath(sourcePath, targetPath)) return this.entry(sourcePath);
     if (source.stats.isDirectory() && containsPath(sourcePath, targetPath)) {
-      throw modelError("validation_failed", "Uma pasta não pode ser movida para dentro de si.");
+      throw modelError(
+        "validation_failed",
+        "Uma pasta não pode ser movida para dentro de si.",
+      );
     }
     try {
       const target = await this.inspect(targetPath);
-      if (source.stats.dev === target.stats.dev && source.stats.ino === target.stats.ino) return this.entry(sourcePath);
+      if (
+        source.stats.dev === target.stats.dev &&
+        source.stats.ino === target.stats.ino
+      )
+        return this.entry(sourcePath);
       if (!overwrite || !source.stats.isFile() || !target.stats.isFile()) {
-        throw modelError("entry_conflict", "O destino já existe e não pode ser substituído.");
+        throw modelError(
+          "entry_conflict",
+          "O destino já existe e não pode ser substituído.",
+        );
       }
     } catch (error) {
       if (errorCode(error) !== "entry_not_found") throw error;
     }
-    const parent = await this.inspect(path.posix.dirname(targetPath), "directory");
+    const parent = await this.inspect(
+      path.posix.dirname(targetPath),
+      "directory",
+    );
     await this.inspect(sourcePath);
-    try { await rename(source.absolutePath, path.join(parent.absolutePath, path.posix.basename(targetPath))); }
-    catch (error) {
-      if (errorCode(error) === "EXDEV") throw modelError("cross_device_operation", "Não é possível mover entre sistemas de arquivos.");
+    try {
+      await rename(
+        source.absolutePath,
+        path.join(parent.absolutePath, path.posix.basename(targetPath)),
+      );
+    } catch (error) {
+      if (errorCode(error) === "EXDEV")
+        throw modelError(
+          "cross_device_operation",
+          "Não é possível mover entre sistemas de arquivos.",
+        );
       throw error;
     }
     return this.entry(targetPath);
@@ -536,25 +796,42 @@ export class Directory {
    * @param signal Cancela a preparação e impede a publicação de uma árvore ainda incompleta.
    * @returns created igual a true após publicar a nova pasta; conflitos lançam erro.
    */
-  async copy(targetPath: string, staging: Directory, signal?: AbortSignal): Promise<{ created: boolean }> {
+  async copy(
+    targetPath: string,
+    staging: Directory,
+    signal?: AbortSignal,
+  ): Promise<{ created: boolean }> {
     signal?.throwIfAborted();
     validatePath(targetPath);
-    if (this.path === ".") throw modelError("entry_forbidden", "A raiz não pode ser origem de cópia.");
+    if (this.path === ".")
+      throw modelError(
+        "entry_forbidden",
+        "A raiz não pode ser origem de cópia.",
+      );
     if (containsPath(this.path, targetPath)) {
-      throw modelError("validation_failed", "A pasta não pode ser copiada sobre si ou para um descendente.");
+      throw modelError(
+        "validation_failed",
+        "A pasta não pode ser copiada sobre si ou para um descendente.",
+      );
     }
     await this.inspect(this.path, "directory");
     await this.inspect(path.posix.dirname(targetPath), "directory");
     try {
       await this.inspect(targetPath);
-      throw modelError("entry_conflict", "A cópia de pasta exige um destino ausente.");
-    } catch (error) { if (errorCode(error) !== "entry_not_found") throw error; }
+      throw modelError(
+        "entry_conflict",
+        "A cópia de pasta exige um destino ausente.",
+      );
+    } catch (error) {
+      if (errorCode(error) !== "entry_not_found") throw error;
+    }
     const temporary = await staging.temporary();
     let published = false;
     try {
-      const directoriesToCopy: Array<{ source: Directory; destination: string }> = [
-        { source: this, destination: temporary.path },
-      ];
+      const directoriesToCopy: Array<{
+        source: Directory;
+        destination: string;
+      }> = [{ source: this, destination: temporary.path }];
       // As subpastas encontradas entram na fila para as próximas iterações.
       for (let index = 0; index < directoriesToCopy.length; index++) {
         signal?.throwIfAborted();
@@ -571,19 +848,37 @@ export class Directory {
       await this.inspect(this.path, "directory");
       try {
         await this.inspect(targetPath);
-        throw modelError("entry_conflict", "O destino foi ocupado durante a cópia.");
-      } catch (error) { if (errorCode(error) !== "entry_not_found") throw error; }
-      const parent = await this.inspect(path.posix.dirname(targetPath), "directory");
+        throw modelError(
+          "entry_conflict",
+          "O destino foi ocupado durante a cópia.",
+        );
+      } catch (error) {
+        if (errorCode(error) !== "entry_not_found") throw error;
+      }
+      const parent = await this.inspect(
+        path.posix.dirname(targetPath),
+        "directory",
+      );
       const source = await temporary.inspect(temporary.path, "directory");
       signal?.throwIfAborted();
-      try { await rename(source.absolutePath, path.join(parent.absolutePath, path.posix.basename(targetPath))); }
-      catch (error) {
-        if (errorCode(error) === "EXDEV") throw modelError("cross_device_operation", "Staging e destino precisam estar no mesmo sistema de arquivos.");
+      try {
+        await rename(
+          source.absolutePath,
+          path.join(parent.absolutePath, path.posix.basename(targetPath)),
+        );
+      } catch (error) {
+        if (errorCode(error) === "EXDEV")
+          throw modelError(
+            "cross_device_operation",
+            "Staging e destino precisam estar no mesmo sistema de arquivos.",
+          );
         throw error;
       }
       published = true;
       return { created: true };
-    } finally { if (!published) await temporary.remove(); }
+    } finally {
+      if (!published) await temporary.remove();
+    }
   }
 
   /** Gera ZIP por partes, sem arquivo permanente e sem incluir a pasta contêiner.
@@ -591,17 +886,33 @@ export class Directory {
    * @param maxBytes Máximo de bytes lidos antes da compressão.
    * @returns Stream que o consumidor deve concluir ou destruir para cancelar.
    */
-  async archive(maxEntries = 10_000, maxBytes = 10_737_418_240): Promise<Readable> {
-    if (!Number.isSafeInteger(maxEntries) || maxEntries <= 0 || !Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
-      throw modelError("validation_failed", "Os limites do ZIP precisam ser inteiros positivos.");
+  async archive(
+    maxEntries = 10_000,
+    maxBytes = 10_737_418_240,
+  ): Promise<Readable> {
+    if (
+      !Number.isSafeInteger(maxEntries) ||
+      maxEntries <= 0 ||
+      !Number.isSafeInteger(maxBytes) ||
+      maxBytes <= 0
+    ) {
+      throw modelError(
+        "validation_failed",
+        "Os limites do ZIP precisam ser inteiros positivos.",
+      );
     }
-    const entries: Array<{ entry: File | Directory; metadata: EntryMetadata }> = [];
+    const entries: Array<{ entry: File | Directory; metadata: EntryMetadata }> =
+      [];
     /** Confere entradas antes de iniciar o ZIP, limitando também o catálogo em memória.
      * @param directory Pasta em inspeção.
      */
     async function collect(directory: Directory): Promise<void> {
       for (const entry of await directory.list()) {
-        if (entries.length >= maxEntries) throw modelError("payload_too_large", "O ZIP excede o limite de entradas.");
+        if (entries.length >= maxEntries)
+          throw modelError(
+            "payload_too_large",
+            "O ZIP excede o limite de entradas.",
+          );
         entries.push({ entry, metadata: await entry.metadata() });
         if (entry instanceof Directory) await collect(entry);
       }
@@ -612,38 +923,52 @@ export class Directory {
     const active = new Set<Readable>();
     let total = 0;
     zip.on("error", (error: Error) => output.destroy(error));
-    output.on("close", () => { for (const stream of active) stream.destroy(); });
+    output.on("close", () => {
+      for (const stream of active) stream.destroy();
+    });
     for (const { entry, metadata } of entries) {
-      const name = this.path === "." ? entry.path : entry.path.slice(this.path.length + 1);
+      const name =
+        this.path === "." ? entry.path : entry.path.slice(this.path.length + 1);
       if (entry instanceof Directory) {
         zip.addEmptyDirectory(name, { mtime: new Date(metadata.modifiedAt) });
         continue;
       }
       const file = entry;
-      zip.addReadStreamLazy(name, { mtime: new Date(metadata.modifiedAt) }, callback => {
-        /** Conta os bytes efetivamente lidos, inclusive se o arquivo mudar após os metadados.
-         * @returns Blocos de bytes que serão compactados, sujeitos ao limite total do ZIP.
-         */
-        async function* chunks(): AsyncGenerator<Buffer> {
-          const source = await file.read();
-          active.add(source);
-          try {
-            if (output.destroyed) return;
-            for await (const chunk of source) {
-              const bytes = Buffer.from(chunk);
-              total += bytes.length;
-              if (total > maxBytes) throw modelError("payload_too_large", "O ZIP excede o limite de bytes.");
-              yield bytes;
+      zip.addReadStreamLazy(
+        name,
+        { mtime: new Date(metadata.modifiedAt) },
+        (callback) => {
+          /** Conta os bytes efetivamente lidos, inclusive se o arquivo mudar após os metadados.
+           * @returns Blocos de bytes que serão compactados, sujeitos ao limite total do ZIP.
+           */
+          async function* chunks(): AsyncGenerator<Buffer> {
+            const source = await file.read();
+            active.add(source);
+            try {
+              if (output.destroyed) return;
+              for await (const chunk of source) {
+                const bytes = Buffer.from(chunk);
+                total += bytes.length;
+                if (total > maxBytes)
+                  throw modelError(
+                    "payload_too_large",
+                    "O ZIP excede o limite de bytes.",
+                  );
+                yield bytes;
+              }
+            } finally {
+              source.destroy();
+              active.delete(source);
             }
-          } finally { source.destroy(); active.delete(source); }
-        }
-        const stream = Readable.from(chunks());
-        active.add(stream);
-        stream.on("error", (error: Error) => zip.emit("error", error));
-        stream.on("close", () => active.delete(stream));
-        callback(null, stream);
-        if (output.destroyed) stream.destroy();
-      });
+          }
+          const stream = Readable.from(chunks());
+          active.add(stream);
+          stream.on("error", (error: Error) => zip.emit("error", error));
+          stream.on("close", () => active.delete(stream));
+          callback(null, stream);
+          if (output.destroyed) stream.destroy();
+        },
+      );
     }
     zip.end();
     return output;
@@ -653,7 +978,11 @@ export class Directory {
    * Valida a árvore antes de começar. Falhas durante a remoção podem deixar exclusão parcial.
    */
   async remove(): Promise<void> {
-    if (this.path === ".") throw modelError("entry_forbidden", "A raiz compartilhada não pode ser excluída.");
+    if (this.path === ".")
+      throw modelError(
+        "entry_forbidden",
+        "A raiz compartilhada não pode ser excluída.",
+      );
     const entries: Array<File | Directory> = [];
     /** Reúne descendentes antes de seus pais para conferir tudo antes da exclusão.
      * @param directory Pasta sendo percorrida.
