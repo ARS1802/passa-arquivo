@@ -3,7 +3,7 @@
 A API já encaminha operações de arquivos a `fileService`, que usa `File` e
 `Directory` para acessar o disco. Este guia descreve as regras implementadas
 e os limites que continuam importantes, como concorrência com outros programas
-e suporte ainda incompleto a Windows.
+e a validação nativa da implementação Windows, ainda pendente.
 
 Os parâmetros e as respostas de cada operação estão no [guia de rotas](endpoints.md).
 Veja também os [erros](errors.md), a [configuração](configuration.md) e os
@@ -103,10 +103,10 @@ vale para links quebrados, pastas intermediárias e links encontrados durante
 cópia, ZIP ou exclusão recursiva. A exclusão não abre uma exceção para remover
 o próprio link.
 
-No Windows, a verificação também precisa considerar junctions e outros reparse
-points que redirecionem acesso. A proteção não pode depender apenas de uma
-checagem de links feita como no Linux; os mecanismos por plataforma ainda
-precisam ser definidos e verificados.
+No Windows, além da inspeção do Node.js, o model confere o atributo nativo
+`ReparsePoint` e recusa junctions e outros itens com esse atributo. A execução
+dessa proteção em Windows real ainda precisa ser validada. Os requisitos de
+NTFS, PowerShell e ACLs estão em [Linux e Windows](platforms.md).
 
 O model realiza as seguintes verificações:
 
@@ -208,8 +208,9 @@ o apaga antes da publicação. Isso não congela o conteúdo nem desfaz ediçõe
 realizadas por outros programas enquanto a operação estava em andamento.
 
 Staging fica fora da raiz e precisa estar no mesmo sistema de arquivos do
-destino. No Linux, usa pastas `0700` e arquivos `0600`. O armazenamento privado
-no Windows é recusado enquanto a proteção por ACL não estiver implementada.
+destino. No Linux, usa pastas `0700` e arquivos `0600`. No Windows, usa uma ACL
+exclusiva do usuário na raiz privada, herdada pelos arquivos e diretórios criados
+nela. Essas permissões são conferidas antes de acessar as entradas.
 Cada operação recebe uma pasta exclusiva, criada com `mkdtemp`. Antes de
 publicar um arquivo, `File.write` confere novamente o destino e seu pai. Uma
 cópia de pasta é montada inteira em staging antes de receber o nome final.

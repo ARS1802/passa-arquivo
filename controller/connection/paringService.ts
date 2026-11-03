@@ -10,7 +10,7 @@ import { isUtf8 } from "node:buffer";
 import { request as httpsRequest } from "node:https";
 import { errorCode, modelError } from "../../model/file/File.js";
 import * as peers from "../../model/peer/peerService.js";
-import { discoveryLimits, getDiscoveryWindow, resolveTargets, validateCandidateCertificate, type Candidate } from "./discoveryService.js";
+import { connectionHost, discoveryLimits, getDiscoveryWindow, resolveTargets, validateCandidateCertificate, type Candidate } from "./discoveryService.js";
 
 const statuses = ["pending", "prepared", "committing", "confirmed", "rejected", "cancelled", "expired"] as const;
 /** Situação da sessão; confirmed exige gravação, confirmação de preparo remoto e atualização TLS local. */
@@ -242,7 +242,7 @@ async function send(session: Session, method: string, suffix: string, body?: obj
       if (error) reject(error); else resolve(value!);
     };
     const outgoing = httpsRequest({
-      host: ip.startsWith("fe80:") ? `${ip}%${session.interfaceName}` : ip,
+      host: connectionHost(ip, session.interfaceName),
       port: discoveryLimits.port, method, path: `/connect/requests${suffix}`, agent: false,
       cert: identity.certificatePem, key: identity.privateKeyPem, ca: [session.peer.certificatePem],
       rejectUnauthorized: true, minVersion: "TLSv1.3", maxVersion: "TLSv1.3", signal: session.signal,

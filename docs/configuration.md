@@ -133,8 +133,10 @@ ou o staging. Estado e staging também não podem conter um ao outro.
 Somente `model/peer` e `tmp` podem ser usados como áreas privadas dentro do
 repositório. No Linux, essas áreas são preparadas com permissão `0700` e os
 arquivos privados com `0600`. Outros diretórios privados existentes precisam
-ter as permissões e o dono conferidos pelo model. No Windows, a abertura do
-armazenamento privado é recusada enquanto a proteção por ACL não existir.
+ter as permissões e o dono conferidos pelo model. No Windows, o model usa
+Windows PowerShell 5.1 para criar e conferir ACLs privadas em disco local NTFS.
+Ausência desse recurso, dono diferente ou permissões amplas impedem a operação.
+A execução nativa ainda precisa ser validada.
 Veja [Arquivos e pastas](filesystem.md) e [Linux e Windows](platforms.md).
 
 ## Opções ainda sem integração

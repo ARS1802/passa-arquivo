@@ -8,6 +8,8 @@
 import { type Stats } from "node:fs";
 import { chmod, lstat, mkdir, mkdtemp, readdir, realpath, rename, rmdir } from "node:fs/promises";
 import { isUtf8 } from "node:buffer";
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
 import { ZipFile } from "yazl";
 import path from "node:path";
@@ -18,6 +20,163 @@ export interface DirectoryBoundaries {
   stateDir: string;
   stagingDir: string;
   repositoryDir: string;
+}
+
+// O código é fixo. Caminhos chegam como dados JSON, nunca como comandos PowerShell.
+const windowsSecurityScript = String.raw`
+$ErrorActionPreference = 'Stop'
+[Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$fullControl = [Security.AccessControl.FileSystemRights]::FullControl
+while ($null -ne ($line = [Console]::ReadLine())) {
+  try {
+    $request = ConvertFrom-Json -InputObject $line
+    $target = $request.paths[0]
+    $volume = [IO.DriveInfo]::new([IO.Path]::GetPathRoot($target))
+    if ($volume.DriveType -eq [IO.DriveType]::Network -or $volume.DriveFormat -ne 'NTFS') {
+      throw 'Sistema de arquivos incompatível'
+    }
+    if ($request.prepare) {
+      $permissions = [Security.AccessControl.DirectorySecurity]::new()
+      $permissions.SetAccessRuleProtection($true, $false)
+      $rule = [Security.AccessControl.FileSystemAccessRule]::new(
+        $sid, $fullControl,
+        [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',
+        [Security.AccessControl.PropagationFlags]::None,
+        [Security.AccessControl.AccessControlType]::Allow)
+      $permissions.AddAccessRule($rule)
+      if ([IO.Directory]::Exists($target)) {
+        if (([IO.File]::GetAttributes($target) -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+          throw 'Ponto de redirecionamento'
+        }
+        $existing = Get-Acl -LiteralPath $target
+        if ($existing.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) {
+          throw 'Dono diferente do usuário atual'
+        }
+        if ($request.managed) { [IO.Directory]::SetAccessControl($target, $permissions) }
+      } else {
+        $permissions.SetOwner($sid)
+        [IO.Directory]::CreateDirectory($target, $permissions) | Out-Null
+      }
+    }
+    for ($index = 0; $index -lt $request.paths.Count; $index++) {
+      $entryPath = $request.paths[$index]
+      if (([IO.File]::GetAttributes($entryPath) -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'Ponto de redirecionamento'
+      }
+      if (!$request.privateStorage) { continue }
+      $acl = Get-Acl -LiteralPath $entryPath
+      if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) {
+        throw 'Dono diferente do usuário atual'
+      }
+      if ($index -eq 0 -and !$acl.AreAccessRulesProtected) { throw 'Herança de permissões na raiz privada' }
+      $rules = $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])
+      $effective = $false
+      foreach ($access in $rules) {
+        if ($access.IdentityReference.Value -ne $sid.Value -or
+            $access.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+            ($access.FileSystemRights -band $fullControl) -ne $fullControl) {
+          throw 'Permissões incompatíveis'
+        }
+        if (($access.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0) {
+          $effective = $true
+        }
+      }
+      if (!$effective) { throw 'Permissões ausentes' }
+    }
+    [Console]::WriteLine('ok')
+  } catch {
+    [Console]::WriteLine('entry_forbidden')
+  }
+}
+`;
+
+// As consultas compartilham o processo por até um segundo de inatividade,
+// evitando iniciar o PowerShell novamente para cada certificado consultado.
+let windowsWorker: ReturnType<typeof startWindowsSecurity> | undefined;
+let windowsIdle: ReturnType<typeof setTimeout> | undefined;
+// A fila mantém cada resposta associada à sua consulta; as permissões não são cacheadas.
+let windowsQueue: Promise<void> = Promise.resolve();
+
+/** Inicia o recurso nativo de ACLs, sem perfil de usuário nem alteração de política.
+ * @returns Processo privado e leitor das respostas, sem expor mensagens internas.
+ */
+function startWindowsSecurity() {
+  const executable = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const child = spawn(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand",
+    Buffer.from(windowsSecurityScript, "utf16le").toString("base64")], { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
+  const reader = createInterface({ input: child.stdout, crlfDelay: Infinity });
+  reader.on("error", () => reader.close());
+  child.on("error", () => reader.close());
+  child.stdin.on("error", () => reader.close());
+  child.once("exit", () => {
+    reader.close();
+    if (windowsWorker?.child === child) windowsWorker = undefined;
+  });
+  return { child, reader, answers: reader[Symbol.asyncIterator]() };
+}
+
+/** Encerra somente o processo auxiliar criado por esta instância.
+ * @param worker Processo que terminou, falhou ou ficou inativo.
+ */
+function stopWindowsSecurity(worker: ReturnType<typeof startWindowsSecurity>): void {
+  if (windowsWorker === worker) windowsWorker = undefined;
+  worker.reader.close();
+  worker.child.kill();
+}
+
+/** Confere ACLs e reparse points usando as APIs nativas do Windows.
+ * @param paths Raiz física seguida dos componentes já conferidos pelo model.
+ * @param privateStorage Exige dono e permissões exclusivos do usuário atual.
+ * @param prepare Permite criar a raiz privada com ACL protegida, antes de gravar dados.
+ * @param managed Permite ajustar a ACL somente de model/peer ou tmp, se pertencem ao usuário.
+ * @throws Recusa acesso ou indisponibilidade do recurso nativo; não há fallback permissivo.
+ */
+function windowsFileAccess(paths: string[], privateStorage: boolean, prepare = false, managed = false): Promise<void> {
+  const operation = windowsQueue.then(async () => {
+    const worker = windowsWorker ??= startWindowsSecurity();
+    if (windowsIdle) clearTimeout(windowsIdle);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const response = worker.answers.next();
+      worker.child.stdin.write(JSON.stringify({ paths, privateStorage, prepare, managed }) + "\n");
+      const answer = await Promise.race([
+        response,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(modelError("private_storage_unavailable", "A conferência de segurança do Windows excedeu o prazo.")), 10_000);
+        }),
+      ]);
+      if (answer.done) throw modelError("private_storage_unavailable", "O recurso de segurança do Windows não está disponível.");
+      if (answer.value !== "ok") throw modelError("entry_forbidden", "O caminho, o dono ou as permissões do Windows não permitem esta operação.");
+    } catch (error) {
+      stopWindowsSecurity(worker);
+      throw error;
+    } finally {
+      if (timer) clearTimeout(timer);
+      if (windowsWorker === worker) windowsIdle = setTimeout(() => stopWindowsSecurity(worker), 1_000);
+    }
+  });
+  windowsQueue = operation.then(() => undefined, () => undefined);
+  return operation;
+}
+
+/** Confere o dono e as permissões POSIX de uma entrada privada.
+ * @param stats Informações da entrada obtidas por lstat.
+ * @returns true se grupo e outros não têm permissões e o dono é o usuário atual, quando getuid está disponível.
+ */
+function hasPrivatePosixPermissions(stats: Stats): boolean {
+  if ((stats.mode & 0o077) !== 0) return false;
+  return !process.getuid || stats.uid === process.getuid();
+}
+
+/** Compara caminhos nativos, respeitando as regras de maiúsculas do sistema.
+ * @param first Primeiro caminho na mesma forma absoluta ou relativa do segundo.
+ * @param second Caminho que será comparado ao primeiro.
+ * @returns true quando ambos representam o mesmo caminho nativo.
+ */
+function samePath(first: string, second: string): boolean {
+  return path.relative(first, second) === "";
 }
 
 /** Confere contenção por componentes, inclusive a igualdade.
@@ -63,14 +222,17 @@ export function validatePath(value: string): void {
     || value.split(/[\\/]/).includes("..")) {
     throw modelError("path_forbidden", "O caminho precisa permanecer dentro da raiz.");
   }
+  const parts = value.split("/");
   if (!value || value.includes("\0") || value.includes("\\") || !value.isWellFormed()
-    || (value !== "." && value.split("/").some(part => part === "" || part === "."))) {
+    || (value !== "." && parts.some(part => part === "" || part === "."))) {
     throw modelError("invalid_path", "O caminho tem um formato inválido.");
   }
-  if (process.platform === "win32" && value !== "." && value.split("/").some(part =>
-    /[<>:"|?*\x00-\x1f]/.test(part) || /[. ]$/.test(part)
-    || /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(part))) {
-    throw modelError("invalid_path", "O nome não é permitido neste sistema operacional.");
+  if (process.platform !== "win32" || value === ".") return;
+  for (const part of parts) {
+    if (/[<>:"|?*\x00-\x1f]/.test(part) || /[. ]$/.test(part)
+      || /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(part)) {
+      throw modelError("invalid_path", "O nome não é permitido neste sistema operacional.");
+    }
   }
 }
 
@@ -111,26 +273,26 @@ export class Directory {
         throw modelError("path_forbidden", "A pasta compartilhada se sobrepõe a uma área privada.");
       }
     }
+    if (process.platform === "win32") await windowsFileAccess([root], false);
     return new Directory(root, stats);
   }
 
-  /** Prepara armazenamento privado no Linux.
-   * No Windows, a definição e verificação das ACLs ainda são necessárias.
+  /** Prepara armazenamento privado com permissões POSIX ou ACLs do Windows.
    * @param rootPath Caminho absoluto da área privada.
    * @param excludedPaths Áreas que não podem conter nem estar contidas neste armazenamento.
    * @param repositoryDir Quando informado, permite apenas model/peer e tmp dentro do repositório,
-   * preparando esses dois diretórios com permissão 0700. Outros locais existentes mantêm suas permissões.
+   * preparando esses dois diretórios com 0700 ou ACL exclusiva do usuário atual.
+   * Outros locais existentes mantêm suas permissões e precisam passar na conferência.
    * @returns Diretório privado com separação e permissões conferidas.
    */
   static async openPrivate(rootPath: string, excludedPaths: readonly string[], repositoryDir?: string): Promise<Directory> {
-    if (process.platform === "win32") throw modelError("private_storage_unavailable", "A proteção por ACL ainda não foi definida para Windows.");
     const root = await configuredPath(rootPath);
     let managed = false;
     if (repositoryDir !== undefined) {
       const repository = await configuredPath(repositoryDir);
       const expectedState = path.join(repository, "model", "peer");
       const expectedStaging = path.join(repository, "tmp");
-      managed = root === expectedState || root === expectedStaging;
+      managed = samePath(root, expectedState) || samePath(root, expectedStaging);
       if (!managed && (containsPath(root, repository) || containsPath(repository, root))) {
         throw modelError("path_forbidden", "O armazenamento privado não pode ocupar esta área do repositório.");
       }
@@ -141,14 +303,15 @@ export class Directory {
         throw modelError("path_forbidden", "O armazenamento privado se sobrepõe a uma área protegida.");
       }
     }
-    await mkdir(root, { recursive: true, mode: 0o700 });
+    if (process.platform === "win32") await windowsFileAccess([root], true, true, managed);
+    else await mkdir(root, { recursive: true, mode: 0o700 });
     let stats = await lstat(root);
-    if (managed && stats.isDirectory() && !stats.isSymbolicLink() && (!process.getuid || stats.uid === process.getuid())) {
+    if (process.platform !== "win32" && managed && stats.isDirectory() && !stats.isSymbolicLink() && (!process.getuid || stats.uid === process.getuid())) {
       await chmod(root, 0o700);
       stats = await lstat(root);
     }
-    if (!stats.isDirectory() || stats.isSymbolicLink() || await realpath(root) !== root
-      || (stats.mode & 0o077) !== 0 || (process.getuid && stats.uid !== process.getuid())) {
+    if (!stats.isDirectory() || stats.isSymbolicLink() || !samePath(await realpath(root), root)
+      || (process.platform !== "win32" && !hasPrivatePosixPermissions(stats))) {
       throw modelError("entry_forbidden", "O armazenamento privado precisa ser uma pasta acessível somente ao dono.");
     }
     return new Directory(root, stats, ".", true);
@@ -206,6 +369,7 @@ export class Directory {
     const stats = await lstat(child);
     if (!stats.isDirectory() || stats.isSymbolicLink()) throw modelError("entry_forbidden", "A entrada não é uma pasta comum.");
     if (stats.dev !== this.#rootStats.dev) throw modelError("cross_device_operation", "A pasta pertence a outro sistema de arquivos.");
+    if (process.platform === "win32") await windowsFileAccess([this.#rootPath, parent.absolutePath, child], this.#privateStorage);
     await rmdir(child);
   }
 
@@ -220,13 +384,14 @@ export class Directory {
     let absolutePath = this.#rootPath;
     let stats = await lstat(absolutePath);
     if (!stats.isDirectory() || stats.isSymbolicLink() || stats.dev !== this.#rootStats.dev || stats.ino !== this.#rootStats.ino
-      || await realpath(absolutePath) !== this.#rootPath) {
+      || !samePath(await realpath(absolutePath), this.#rootPath)) {
       throw modelError("entry_forbidden", "A raiz compartilhada mudou; selecione-a novamente.");
     }
-    if (this.#privateStorage && ((stats.mode & 0o077) !== 0 || (process.getuid && stats.uid !== process.getuid()))) {
+    if (process.platform !== "win32" && this.#privateStorage && !hasPrivatePosixPermissions(stats)) {
       throw modelError("entry_forbidden", "As permissões do armazenamento privado mudaram.");
     }
     const parts = relativePath === "." ? [] : relativePath.split("/");
+    const inspectedPaths = [absolutePath];
     for (const [index, part] of parts.entries()) {
       absolutePath = path.join(absolutePath, part);
       try { stats = await lstat(absolutePath); }
@@ -239,15 +404,17 @@ export class Directory {
         throw modelError("entry_forbidden", "Links e entradas especiais não são permitidos.");
       }
       if (stats.dev !== this.#rootStats.dev) throw modelError("cross_device_operation", "A entrada pertence a outro sistema de arquivos.");
-      if (this.#privateStorage && ((stats.mode & 0o077) !== 0 || (process.getuid && stats.uid !== process.getuid()))) {
+      if (process.platform !== "win32" && this.#privateStorage && !hasPrivatePosixPermissions(stats)) {
         throw modelError("entry_forbidden", "Uma entrada privada tem permissões incompatíveis.");
       }
       if (index < parts.length - 1 && !stats.isDirectory()) throw modelError("entry_conflict", "Um componente não é diretório.");
-      if (await realpath(absolutePath) !== absolutePath) throw modelError("entry_forbidden", "A localização da entrada mudou.");
+      if (!samePath(await realpath(absolutePath), absolutePath)) throw modelError("entry_forbidden", "A localização da entrada mudou.");
+      inspectedPaths.push(absolutePath);
     }
     if ((expected === "file" && !stats.isFile()) || (expected === "directory" && !stats.isDirectory())) {
       throw modelError("entry_conflict", "O tipo da entrada é incompatível com a operação.");
     }
+    if (process.platform === "win32") await windowsFileAccess(inspectedPaths, this.#privateStorage);
     return { absolutePath, stats };
   }
 
@@ -265,7 +432,7 @@ export class Directory {
    */
   async metadata(): Promise<EntryMetadata> {
     const { stats } = await this.inspect(this.path, "directory");
-    return { name: this.path.split("/").at(-1)!, path: this.path, type: "directory", size: null, modifiedAt: stats.mtime.toISOString() };
+    return { name: path.posix.basename(this.path), path: this.path, type: "directory", size: null, modifiedAt: stats.mtime.toISOString() };
   }
 
   /** Lista filhos imediatos, com pastas primeiro e nomes ordenados pelos bytes UTF-8.
@@ -285,8 +452,8 @@ export class Directory {
     return entries.sort((first, second) => {
       if (first instanceof Directory && !(second instanceof Directory)) return -1;
       if (second instanceof Directory && !(first instanceof Directory)) return 1;
-      const firstName = first.path.split("/").at(-1)!;
-      const secondName = second.path.split("/").at(-1)!;
+      const firstName = path.posix.basename(first.path);
+      const secondName = path.posix.basename(second.path);
       return Buffer.compare(Buffer.from(firstName), Buffer.from(secondName));
     });
   }
@@ -305,7 +472,7 @@ export class Directory {
       try { await this.inspect(current, "directory"); }
       catch (error) {
         if (errorCode(error) !== "entry_not_found") throw error;
-        const parent = parts.slice(0, index).join("/") || ".";
+        const parent = path.posix.dirname(current);
         const checked = await this.inspect(parent, "directory");
         try {
           await mkdir(path.join(checked.absolutePath, parts[index]!), this.#privateStorage ? { mode: 0o700 } : {});
@@ -331,8 +498,8 @@ export class Directory {
     if (typeof overwrite !== "boolean") throw modelError("validation_failed", "overwrite precisa ser booleano.");
     if (sourcePath === ".") throw modelError("entry_forbidden", "A raiz não pode ser movida.");
     const source = await this.inspect(sourcePath);
-    if (sourcePath === targetPath) return this.entry(sourcePath);
-    if (source.stats.isDirectory() && targetPath.startsWith(`${sourcePath}/`)) {
+    if (samePath(sourcePath, targetPath)) return this.entry(sourcePath);
+    if (source.stats.isDirectory() && containsPath(sourcePath, targetPath)) {
       throw modelError("validation_failed", "Uma pasta não pode ser movida para dentro de si.");
     }
     try {
@@ -373,7 +540,7 @@ export class Directory {
     signal?.throwIfAborted();
     validatePath(targetPath);
     if (this.path === ".") throw modelError("entry_forbidden", "A raiz não pode ser origem de cópia.");
-    if (targetPath === this.path || targetPath.startsWith(`${this.path}/`)) {
+    if (containsPath(this.path, targetPath)) {
       throw modelError("validation_failed", "A pasta não pode ser copiada sobre si ou para um descendente.");
     }
     await this.inspect(this.path, "directory");
@@ -448,34 +615,35 @@ export class Directory {
     output.on("close", () => { for (const stream of active) stream.destroy(); });
     for (const { entry, metadata } of entries) {
       const name = this.path === "." ? entry.path : entry.path.slice(this.path.length + 1);
-      if (entry instanceof Directory) zip.addEmptyDirectory(name, { mtime: new Date(metadata.modifiedAt) });
-      else {
-        const file = entry;
-        zip.addReadStreamLazy(name, { mtime: new Date(metadata.modifiedAt) }, callback => {
-          /** Conta os bytes efetivamente lidos, inclusive se o arquivo mudar após os metadados.
-           * @returns Blocos de bytes que serão compactados, sujeitos ao limite total do ZIP.
-           */
-          async function* chunks(): AsyncGenerator<Buffer> {
-            const source = await file.read();
-            active.add(source);
-            try {
-              if (output.destroyed) return;
-              for await (const chunk of source) {
-                const bytes = Buffer.from(chunk);
-                total += bytes.length;
-                if (total > maxBytes) throw modelError("payload_too_large", "O ZIP excede o limite de bytes.");
-                yield bytes;
-              }
-            } finally { source.destroy(); active.delete(source); }
-          }
-          const stream = Readable.from(chunks());
-          active.add(stream);
-          stream.on("error", (error: Error) => zip.emit("error", error));
-          stream.on("close", () => active.delete(stream));
-          callback(null, stream);
-          if (output.destroyed) stream.destroy();
-        });
+      if (entry instanceof Directory) {
+        zip.addEmptyDirectory(name, { mtime: new Date(metadata.modifiedAt) });
+        continue;
       }
+      const file = entry;
+      zip.addReadStreamLazy(name, { mtime: new Date(metadata.modifiedAt) }, callback => {
+        /** Conta os bytes efetivamente lidos, inclusive se o arquivo mudar após os metadados.
+         * @returns Blocos de bytes que serão compactados, sujeitos ao limite total do ZIP.
+         */
+        async function* chunks(): AsyncGenerator<Buffer> {
+          const source = await file.read();
+          active.add(source);
+          try {
+            if (output.destroyed) return;
+            for await (const chunk of source) {
+              const bytes = Buffer.from(chunk);
+              total += bytes.length;
+              if (total > maxBytes) throw modelError("payload_too_large", "O ZIP excede o limite de bytes.");
+              yield bytes;
+            }
+          } finally { source.destroy(); active.delete(source); }
+        }
+        const stream = Readable.from(chunks());
+        active.add(stream);
+        stream.on("error", (error: Error) => zip.emit("error", error));
+        stream.on("close", () => active.delete(stream));
+        callback(null, stream);
+        if (output.destroyed) stream.destroy();
+      });
     }
     zip.end();
     return output;

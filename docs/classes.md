@@ -45,7 +45,7 @@ e pela preparação e publicação em `File.write`.
 | Arquivo em `controller/connection` | Funções e responsabilidade |
 | --- | --- |
 | `sharingService.ts` | `query`, `jsonObject`, `stringField`, `overwriteField` e `noBody` validam dados HTTP; `metadataLocation` monta a URL de metadados; `sendStream` envia bytes; `handleError` traduz falhas. Não há notificações de alterações de arquivos. |
-| `discoveryService.ts` | `resolveTargets` e `isLocalTarget` delimitam a rede; `activateDiscovery`, `deactivateDiscovery`, `isDiscoveryActive` e `getDiscoveryWindow` controlam a janela; `discover` procura candidatos; `validateCandidateCertificate` confere certificados sem conceder confiança. |
+| `discoveryService.ts` | `resolveTargets` e `isLocalTarget` delimitam a rede; `activateDiscovery`, `deactivateDiscovery`, `isDiscoveryActive` e `getDiscoveryWindow` controlam a janela; `connectionHost` monta o escopo nativo de IPv6 link-local; `discover` procura candidatos; `validateCandidateCertificate` confere certificados sem conceder confiança. |
 | `paringService.ts` | Mantém pedidos, aceites, preparação e confirmação. As funções públicas e o fluxo bilateral estão em [Conexão](connection.md). `setTrustUpdater` recebe a operação de atualização TLS registrada pelo backend. |
 
 `controller/api/routes/connect.ts` exporta `openDiscovery` e `closeDiscovery`.
@@ -98,6 +98,7 @@ e mantém os registros. Essa integração existe no backend; a GUI ainda não a 
 | `node:https` e `node:tls` | Servem os dois contextos HTTPS e trocam mensagens de pareamento. O transporte confere o certificado esperado; o backend recarrega certificados confiáveis com `setSecureContext`, preservando TLS 1.3 e mTLS. |
 | `node:stream` | `Directory.archive`, em `model/file/Directory.ts`, usa `Readable.from` para fornecer os bytes de cada arquivo ao ZIP por partes. Durante a leitura, conta os bytes não comprimidos e interrompe ao exceder o limite. O fechamento da saída destrói os streams ativos. |
 | `busboy` | Em `controller/api/routes/upload.ts`, separa o multipart em partes. O controller aceita somente uma parte de arquivo chamada `file`; o model confere o limite de bytes antes da publicação. |
+| `node:child_process` e `node:readline` | `Directory` consulta ACLs e reparse points no Windows por um processo PowerShell local. O código é fixo, os caminhos são dados JSON e a resposta informa apenas sucesso ou recusa. Não é um servidor nem uma rota adicional. |
 | `yazl` | `Directory.archive` usa `ZipFile`, `addReadStreamLazy`, `addEmptyDirectory` e `end` para produzir um ZIP em stream, com nomes relativos e pastas vazias. Os arquivos são lidos pelos objetos `File`; o ZIP não é salvo como resultado permanente. |
 
 `node-forge` e `yazl` são pacotes instalados pelo npm, acompanhados por
@@ -137,8 +138,9 @@ O CSV antigo é aceito e os peers já confiáveis são preservados. O fluxo de
 raiz compartilhada. Os padrões são `model/peer` para estado e `tmp` para staging;
 somente essas duas áreas específicas são permitidas dentro do repositório e seus
 dados de execução são ignorados pelo Git. A implementação atual verifica permissões
-POSIX; a abertura do armazenamento privado no Windows é recusada enquanto a
-proteção por ACL não estiver definida.
+POSIX e ACLs do usuário atual no Windows, usando as APIs nativas pelo Windows
+PowerShell 5.1. Ausência do recurso nativo, ACL incompatível e reparse points
+impedem a operação. Essa integração ainda exige validação em Windows real.
 
 Essas funcionalidades têm implementação, mas sua validação ainda está incompleta.
 O estado das verificações está em [Testes](testing.md#estado-atual-do-model).

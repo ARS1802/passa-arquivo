@@ -104,6 +104,21 @@ function localNetworks(interfaceName?: string) {
   return entries;
 }
 
+/** Monta o endereço de conexão com o índice nativo da interface para IPv6 link-local.
+ * @param ipAddress IP literal já conferido contra as redes permitidas pelo chamador.
+ * @param interfaceName Interface local escolhida; obrigatória para IPv6 link-local.
+ * @returns IP sem alterações de identidade, acrescentando apenas o escopo local necessário.
+ * @throws Se a interface não existir ou não tiver um índice IPv6 utilizável.
+ */
+export function connectionHost(ipAddress: string, interfaceName?: string): string {
+  const ip = canonicalIp(ipAddress);
+  if (!/^fe[89ab][0-9a-f]:/.test(ip)) return ip;
+  if (interfaceName === undefined) throw modelError("validation_failed", "IPv6 link-local exige uma interface explícita.");
+  const network = localNetworks(interfaceName).find(entry => entry.family === "IPv6" && entry.scopeid > 0);
+  if (!network || network.family !== "IPv6") throw modelError("validation_failed", "A interface não tem um índice IPv6 utilizável.");
+  return `${ip}%${network.scopeid}`;
+}
+
 /** Confere se o IP pertence às redes das interfaces locais selecionadas.
  * @param ipAddress IP literal sem identificador de zona.
  * @param interfaceName Interface escolhida, quando houver.
@@ -147,7 +162,7 @@ export function resolveTargets(targets: DiscoveryTargets, interfaceName?: string
   const add = (value: string): void => {
     const ip = canonicalIp(value);
     if (!isLocalTarget(ip, interfaceName)) throw modelError("discovery_target_forbidden", "O destino está fora das redes locais selecionadas.");
-    if (ip.startsWith("fe80:") && interfaceName === undefined) throw modelError("validation_failed", "IPv6 link-local exige uma interface explícita.");
+    connectionHost(ip, interfaceName);
     addresses.add(ip);
     if (addresses.size > discoveryLimits.maxTargets) throw modelError("discovery_limit_exceeded", "A busca excede 256 destinos distintos.");
   };
@@ -240,7 +255,7 @@ async function probe(ipAddress: string, identity: Awaited<ReturnType<typeof loca
       else if (invalidResponse) reason = "invalid_response";
       finish({ ipAddress, reason });
     };
-    const host = ipAddress.startsWith("fe80:") ? `${ipAddress}%${scope.interfaceName}` : ipAddress;
+    const host = connectionHost(ipAddress, scope.interfaceName);
     const outgoing = request({
       host, port: discoveryLimits.port, path: "/connect", method: "GET", agent: false,
       cert: identity.certificatePem, key: identity.privateKeyPem,

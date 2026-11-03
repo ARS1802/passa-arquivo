@@ -348,6 +348,70 @@ com simulações de mensagens de sucesso:
 | Mudança de endereço | Mesmo certificado em novo IP continua reconhecido; certificado diferente no mesmo IP não herda confiança. |
 | Ciclo da identidade | Reinício mantém confiança; troca, expiração, perda ou retirada de confiança têm comportamento explícito; sessões abertas e retomadas TLS precisam respeitar a política. |
 
+## Suporte Windows
+
+A implementação usa ACLs e detecção nativa de reparse points em
+`model/file/Directory.ts`, com Windows PowerShell 5.1 e disco local NTFS.
+Os requisitos e o procedimento de inicialização estão em
+[Linux e Windows](platforms.md). Isso descreve código implementado, não uma
+validação concluída em Windows real.
+
+Na alteração de 2026-11-02, foram executados da raiz, em Linux com Node.js
+26.10.0, `npm run build:backend` e verificadores com `node --input-type=module`
+pela entrada padrão. A compilação passou. Não foram criados arquivos de teste
+nem instaladas ferramentas. Os dados e processos de teste eram exclusivos e
+foram removidos ou encerrados ao final.
+
+| Grupo executado | Resultado e alcance |
+| --- | --- |
+| Model e regras de caminhos | 41 verificações passaram: 21 de operações/permissões POSIX no Linux, 16 de regras Windows com `path.win32` e plataforma controlada, e 4 de recusa sem recurso PowerShell. Incluíram identidade persistente, peers, escrita, cópia, movimentação, ZIP, exclusão, limites, links e permissões alteradas. |
+| Escopo IPv6 | 12 verificações passaram usando metadados de interfaces controlados: endereço com índice numérico, normalização, preservação do IP sem escopo no resultado da busca e recusa de interface ausente ou incompatível. Nenhum socket IPv6 real foi aberto nesse grupo. |
+| Pareamento e API | 15 verificações passaram em duas instâncias Linux no mesmo computador: descoberta real em loopback, recusa de conclusão sem aceite, aceites locais das duas pontas, confirmação bilateral, CSV trusted e consultas HTTPS autenticadas de saúde e metadados. O grupo foi repetido após os ajustes de rede. |
+
+A tentativa inicial do primeiro verificador parou após as verificações Linux:
+o módulo carregado por URL `data:` não conseguia resolver o import de `yazl`.
+O verificador foi corrigido para usar a URL absoluta da dependência; o grupo
+completo então passou. Isso foi uma falha do verificador, sem demonstrar um
+defeito na aplicação.
+
+A simulação das regras de caminhos e a recusa sem PowerShell não executam ACLs
+Windows. Não foram executados PowerShell 5.1, ACLs NTFS, sockets IPv6 link-local
+reais ou pareamento Linux ↔ Windows neste ambiente. Esses itens continuam
+pendentes de validação nativa. O script `npm test` permanece um placeholder.
+
+### Roteiro nativo Windows — ainda não executado
+
+Use uma conta normal e uma pasta de teste exclusiva em disco local NTFS. No
+PowerShell, a partir da raiz do repositório, prepare caminhos sem dados reais:
+
+```powershell
+$windowsQaRoot = Join-Path $env:TEMP ("passa-arquivo-qa-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $windowsQaRoot | Out-Null
+$env:PASSA_ROOT = Join-Path $windowsQaRoot "shared"
+New-Item -ItemType Directory -Path $env:PASSA_ROOT | Out-Null
+$env:PASSA_STATE_DIR = Join-Path $windowsQaRoot "state"
+$env:PASSA_STAGING_DIR = Join-Path $windowsQaRoot "staging"
+$env:PASSA_HOST = "0.0.0.0"
+$windowsQaRoot
+```
+
+Estado e staging não são criados manualmente; o model deve criá-los com as ACLs
+corretas. Os valores acima valem para essa sessão PowerShell e seus processos
+filhos. Substitua os IPs dos exemplos de conexão pelos das máquinas reais.
+
+| Verificação | Procedimento e resultado esperado |
+| --- | --- |
+| 1. Inicialização | Execute `npm run build:backend` e `npm run start:backend`. Deve iniciar HTTPS e criar `state/tls/server.crt`, `server.key` e `index.csv` na pasta de teste, sem exigir terminal elevado. Encerre normalmente antes de prosseguir. |
+| 2. Permissões | Use `Get-Acl -LiteralPath $env:PASSA_STATE_DIR` e `Get-Acl -LiteralPath (Join-Path $env:PASSA_STATE_DIR 'tls/server.key')`. O dono deve ser o usuário atual, a raiz deve ter `AreAccessRulesProtected=True` e as regras devem permitir controle total somente a esse usuário. Confira também o staging. Os campos podem ser exibidos com `Format-List Owner, AreAccessRulesProtected, Access`. |
+| 3. Pareamento cruzado | Siga o [exemplo de duas instalações](connection.md#exemplo-entre-duas-instalações-de-teste), uma no Windows e outra no Linux, mantendo `startBackend` e as chamadas locais na mesma sessão Node de cada máquina. As duas pontas devem chegar a `confirmed`; `/health` deve responder `200` com mTLS. |
+| 4. Arquivos e recusas | Com o peer autenticado, envie e baixe um arquivo de teste e copie uma pasta vazia. O conteúdo deve coincidir. Um caminho `CON` deve retornar `400 invalid_path`; uma junction criada na raiz de teste e consultada pela API deve retornar `403 entry_forbidden`. Sem certificado, a conexão deve ser recusada antes do acesso. |
+| 5. ACL insegura e reinício | Somente na chave gerada para este teste, acrescente uma permissão explícita de leitura para outro usuário e reinicie o backend com os mesmos caminhos. A inicialização deve falhar. Remova essa permissão de teste e confira que reiniciar preserva o mesmo certificado e os peers já pareados. Não use chaves de uma instalação real nessa verificação. |
+
+Para mudar ACLs ou criar a junction em outro terminal, use os caminhos exibidos
+em `$windowsQaRoot`; variáveis de uma sessão não aparecem automaticamente na
+outra. Ao terminar, encerre os dois processos e descarte apenas a pasta exclusiva
+deste teste. Não esvazie diretórios temporários do sistema ou pastas do usuário.
+
 ## Linux e Windows
 
 A verificação futura deverá usar instalações nativas de Linux Mint, Ubuntu e

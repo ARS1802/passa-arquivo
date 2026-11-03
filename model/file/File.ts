@@ -37,8 +37,9 @@ export function modelError(code: string, message: string): Error & { code: strin
  * @returns Código textual disponível no erro, ou undefined quando ele não existe.
  */
 export function errorCode(error: unknown): string | undefined {
-  return error !== null && typeof error === "object" && "code" in error
-    && typeof error.code === "string" ? error.code : undefined;
+  if (error === null || typeof error !== "object" || !("code" in error)) return undefined;
+  if (typeof error.code !== "string") return undefined;
+  return error.code;
 }
 
 /** Encapsula um arquivo regular. Revalida sua localização antes de acessar o disco. */
@@ -66,7 +67,7 @@ export class File {
   async metadata(): Promise<EntryMetadata> {
     const { stats } = await this.#directory.inspect(this.path, "file");
     return {
-      name: this.path.split("/").at(-1)!, path: this.path, type: "file",
+      name: path.posix.basename(this.path), path: this.path, type: "file",
       size: stats.size, modifiedAt: stats.mtime.toISOString(),
     };
   }

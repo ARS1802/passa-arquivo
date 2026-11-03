@@ -139,7 +139,9 @@ function parseIndex(source: string): string[][] {
           closed = true;
         }
       } else field += char;
-    } else if (char === "," || char === "\n" || char === "\r") {
+      continue;
+    }
+    if (char === "," || char === "\n" || char === "\r") {
       row.push(field);
       field = "";
       closed = false;
@@ -148,11 +150,14 @@ function parseIndex(source: string): string[][] {
         rows.push(row);
         row = [];
       }
-    } else if (char === '"' && field === "" && !closed) quoted = true;
-    else {
-      if (closed || char === '"') throw modelError("peer_store_invalid", "O índice CSV tem sintaxe inválida.");
-      field += char;
+      continue;
     }
+    if (char === '"' && field === "" && !closed) {
+      quoted = true;
+      continue;
+    }
+    if (closed || char === '"') throw modelError("peer_store_invalid", "O índice CSV tem sintaxe inválida.");
+    field += char;
   }
   if (quoted) throw modelError("peer_store_invalid", "O índice CSV contém um campo incompleto.");
   if (field !== "" || row.length > 0 || closed) { row.push(field); rows.push(row); }
@@ -165,8 +170,11 @@ function parseIndex(source: string): string[][] {
  */
 async function loadPeers(directory: Directory): Promise<StoredPeer[]> {
   const rows = parseIndex(await readText(directory.file("index.csv")));
-  const legacy = rows[0]?.join(",") === legacyColumns.join(",");
-  if ((!legacy && rows[0]?.join(",") !== columns.join(",")) || rows.length > 100) {
+  const header = rows[0];
+  const legacy = header?.length === legacyColumns.length;
+  const expected = legacy ? legacyColumns : columns;
+  if (!header || header.length !== expected.length
+    || header.some((column, index) => column !== expected[index]) || rows.length > 100) {
     throw modelError("peer_store_invalid", "O índice de peers tem cabeçalho ou quantidade de registros inválidos.");
   }
   const peers: StoredPeer[] = [];
@@ -281,10 +289,8 @@ export function initialize(options: PeerStorageOptions): Promise<{ certificatePe
     let exists = true;
     try { await directory.inspect("tls", "directory"); }
     catch (error) { if (errorCode(error) !== "entry_not_found") throw error; exists = false; }
-    if (!exists) {
-      if (hasIndex || names.some(name => name.startsWith(".operation-"))) {
-        throw modelError("invalid_identity", "A identidade local está ausente em um armazenamento já utilizado.");
-      }
+    if (!exists && (hasIndex || names.some(name => name.startsWith(".operation-")))) {
+      throw modelError("invalid_identity", "A identidade local está ausente em um armazenamento já utilizado.");
     }
     if (!hasIndex) {
       // Posições vazias do esqueleto não são peers. rmdir nunca apaga conteúdo.
@@ -434,8 +440,13 @@ async function storePeer(input: Pick<Peer, "certificatePem" | "displayName" | "i
     await saveIndex(directory, peers);
     return existing;
   }
-  const id = Array.from({ length: 99 }, (_, index) => String(index + 1).padStart(2, "0"))
-    .find(candidate => !peers.some(peer => peer.directory === candidate));
+  let id: string | undefined;
+  for (let index = 0; index < 99; index++) {
+    const candidate = String(index + 1).padStart(2, "0");
+    if (peers.some(peer => peer.directory === candidate)) continue;
+    id = candidate;
+    break;
+  }
   if (!id) throw modelError("peer_limit_reached", "As 99 posições de peers estão ocupadas.");
   const peer: StoredPeer = { ...input, directory: id, firstConnectedAt: now, lastConnectedAt: now, pairingId, status };
   const temporary = await directory.temporary();

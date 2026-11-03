@@ -75,7 +75,9 @@ em `/31` e `/32`, considera os endereços individuais da faixa. CIDRs precisam
 usar o endereço da rede: escreva `192.168.1.0/24`, não `192.168.1.20/24`.
 
 IPv6 aceita somente endereços explícitos; CIDRs IPv6 não são expandidos. Um
-endereço link-local, como `fe80::1234`, exige uma interface explícita. Não são
+endereço link-local, como `fe80::1234`, exige uma interface explícita. O controller
+obtém o `scopeid` numérico dessa interface para montar o endereço do socket,
+por exemplo `fe80::1234%17`; o IP persistido continua sem esse sufixo local. Não são
 aceitos DNS, URLs, multicast, endereço não especificado ou IPv4 mapeado em IPv6.
 
 Um resultado de busca é apenas um candidato. Nome, IP e certificado anunciado
@@ -166,35 +168,107 @@ não pode abrir a descoberta, escolher redes ou registrar aceite humano.
 
 ### Exemplo entre duas instalações de teste
 
-O model e `openDiscovery` precisam estar preparados no processo de cada controller.
-As funções abaixo são importadas de `controller/connection/paringService.ts`.
+Este procedimento usa as mesmas funções no Linux e no Windows. No Windows,
+execute o terminal PowerShell com uma conta normal; os requisitos de NTFS e
+ACLs estão em [Linux e Windows](platforms.md). A execução cruzada ainda exige
+validação nos dois sistemas, conforme [Testes](testing.md#suporte-windows).
 
-Em A, com B obtido por `discover`:
+Considere A com IP `192.168.1.20` e B com IP `192.168.1.35`. São exemplos:
+substitua pelos IPs reais da mesma rede. As portas 8443 e 8444 precisam estar
+acessíveis entre as máquinas. Cada instalação usa sua própria identidade válida.
+A lista de peers pode estar vazia antes do primeiro pareamento.
 
-```ts
-const request = await startPairingRequest(candidateB, "Notebook da Ana");
-// expectedB vem do usuário de B, por um canal confiável e independente.
-await acceptPairingRequest(request.id, expectedB);
+Encerre o backend anterior antes deste exemplo. Em cada computador, na raiz do
+respectivo projeto, compile e abra uma sessão interativa do Node:
+
+```sh
+npm run build:backend
+node
 ```
 
-Em B, o usuário consulta `listPairingRequests()`, escolhe o pedido correspondente
-à instalação A e confere `expectedA`, recebido fora da conexão:
+Execute os blocos seguintes nessa mesma sessão de cada máquina. Os imports usam
+`dist`, pois o Node executa o JavaScript compilado. Os comandos locais não
+controlam outro processo que tenha sido iniciado por `npm run start:backend`.
 
-```ts
-await acceptPairingRequest(requestId, expectedA);
+```js
+var { startBackend } = await import("./dist/controller/api/app.js");
+var { openDiscovery } = await import("./dist/controller/api/routes/connect.js");
+var { discover } = await import("./dist/controller/connection/discoveryService.js");
+var pairing = await import("./dist/controller/connection/paringService.js");
+
+process.env.PASSA_HOST = "0.0.0.0";
+var backend = await startBackend();
 ```
 
-De volta a A:
+`startBackend` usa o `.env` e os caminhos padrão de cada sistema. Se você usa
+outro `PASSA_STATE_DIR`, configure-o antes dessa chamada. No Windows, caminhos
+ativos no `.env` precisam ser caminhos Windows; não use um caminho Linux para
+apontar à identidade. A raiz explícita precisa existir, e um estado com
+certificado ou chave ausentes continua sendo recusado.
 
-```ts
-const result = await completePairingRequest(request.id);
-console.log(result.status); // confirmed, somente após as gravações e a recarga TLS
+Com os dois backends prontos, abra a janela. Em A:
+
+```js
+var discoveryWindow = await openDiscovery({
+  displayName: "Computador A",
+  listenAddress: "192.168.1.20",
+});
 ```
 
-O valor comunicado por cada pessoa é `localFingerprint` da sua própria instalação.
-`peerFingerprint` é o valor observado do outro lado e precisa ser comparado com
-essa informação independente. Os IPs, certificados e identificadores do exemplo
-pertencem às instalações escolhidas; não são credenciais prontas para copiar.
+Em B:
+
+```js
+var discoveryWindow = await openDiscovery({
+  displayName: "Computador B",
+  listenAddress: "192.168.1.35",
+});
+```
+
+A partir da abertura, há no máximo 120 segundos para descobrir, conferir e
+concluir. Em A, encontre B e envie o pedido:
+
+```js
+var search = await discover({ addresses: ["192.168.1.35"] });
+var candidateB = search.candidates.find(peer => peer.ipAddress === "192.168.1.35");
+if (!candidateB) throw new Error("B não encontrado; consulte search.failures.");
+
+var requestA = await pairing.startPairingRequest(candidateB, "Computador A");
+console.log("Pedido:", requestA.id);
+console.log("Impressão digital de A:", requestA.localFingerprint);
+```
+
+Em B, use o identificador mostrado em A para escolher o pedido recebido:
+
+```js
+var requestB = pairing.listPairingRequests().find(
+  request => request.id === "COLE_O_IDENTIFICADOR_DO_PEDIDO"
+);
+if (!requestB) throw new Error("Pedido não encontrado nesta instalação.");
+console.log("Impressão digital de B:", requestB.localFingerprint);
+```
+
+Cada pessoa comunica o `localFingerprint` exibido na própria máquina por um
+canal independente e confiável, por exemplo pessoalmente. Cole o valor completo,
+com os 64 caracteres hexadecimais; os dois-pontos podem ser mantidos.
+Em B, aceite com o valor informado por A:
+
+```js
+await pairing.acceptPairingRequest(requestB.id, "COLE_A_IMPRESSAO_DIGITAL_DE_A");
+```
+
+Em A, aceite com o valor informado por B e conclua:
+
+```js
+await pairing.acceptPairingRequest(requestA.id, "COLE_A_IMPRESSAO_DIGITAL_DE_B");
+var result = await pairing.completePairingRequest(requestA.id);
+console.log(result.status); // Esperado: confirmed
+```
+
+Em B, `pairing.getPairingRequest(requestB.id).status` também deve ser `confirmed`.
+Em cada sessão, `await discoveryWindow.close()` fecha a entrada temporária.
+O backend permanece aberto, e os registros confiáveis ficam persistidos no
+`stateDir` de cada máquina. Os exemplos não transferem chaves privadas nem
+substituem as conferências humanas por valores recebidos do próprio anúncio.
 
 ## Recusa, expiração e repetição
 

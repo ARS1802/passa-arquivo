@@ -47,14 +47,15 @@ export function query(request: Request, allowed: readonly string[]): Record<stri
   const result: Record<string, string> = Object.create(null);
   const queryStart = request.originalUrl.indexOf("?");
   const rawQuery = queryStart < 0 ? "" : request.originalUrl.slice(queryStart + 1);
-  for (const part of rawQuery.split("&")) {
+  // Mantém %2B intacto até a decodificação, para distingui-lo de + (espaço).
+  for (const part of rawQuery.replaceAll("+", " ").split("&")) {
     if (!part) continue;
     const separator = part.indexOf("=");
     let name: string;
     let value: string;
     try {
-      name = decodeURIComponent((separator < 0 ? part : part.slice(0, separator)).replaceAll("+", " "));
-      value = decodeURIComponent((separator < 0 ? "" : part.slice(separator + 1)).replaceAll("+", " "));
+      name = decodeURIComponent(separator < 0 ? part : part.slice(0, separator));
+      value = decodeURIComponent(separator < 0 ? "" : part.slice(separator + 1));
     } catch { throw modelError("malformed_request", "A query contém uma codificação inválida."); }
     if (!allowed.includes(name) || Object.hasOwn(result, name)) {
       throw modelError("validation_failed", "A query contém parâmetros desconhecidos ou repetidos.");

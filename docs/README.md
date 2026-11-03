@@ -7,7 +7,8 @@ A API será o módulo central P2P do passa-arquivo, para Linux Mint, Ubuntu e
 Windows. Comece pela arquitetura e pelo fluxo de conexão. O backend já contém
 descoberta, pareamento, mTLS, persistência de peers e operações de arquivos.
 A GUI ainda mostra a tela inicial do Vite e não está integrada a esses fluxos.
-O armazenamento privado no Windows ainda depende da implementação de ACLs.
+O model inclui ACLs para Windows; a validação nativa dessa integração continua
+pendente, conforme [Testes](testing.md#suporte-windows).
 
 | Guia | O que você encontra |
 | --- | --- |

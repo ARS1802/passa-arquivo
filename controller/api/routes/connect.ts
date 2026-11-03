@@ -13,7 +13,7 @@ import type { Socket } from "node:net";
 import { localIdentity } from "../../../model/peer/peerService.js";
 import { modelError } from "../../../model/file/File.js";
 import { handleError, jsonObject, noBody, query } from "../../connection/sharingService.js";
-import { activateDiscovery, deactivateDiscovery, discoveryLimits, isDiscoveryActive, isLocalTarget, validateCandidateCertificate } from "../../connection/discoveryService.js";
+import { activateDiscovery, connectionHost, deactivateDiscovery, discoveryLimits, isDiscoveryActive, isLocalTarget, validateCandidateCertificate } from "../../connection/discoveryService.js";
 import { receivePairingRequest, pairingMessage, prepareReceivedPairing, confirmReceivedPairing, receivePairingClosure } from "../../connection/paringService.js";
 
 /** Opções fornecidas por uma chamada local; nenhum candidato remoto pode defini-las. */
@@ -47,6 +47,7 @@ export async function openDiscovery(options: DiscoveryOptions): Promise<{ expire
     || !isLocalTarget(options.listenAddress, options.interfaceName)) {
     throw modelError("validation_failed", "Informe um nome e um endereço de escuta da rede local selecionada.");
   }
+  const listenAddress = connectionHost(options.listenAddress, options.interfaceName);
   opening = true;
   try {
     const identity = await localIdentity();
@@ -157,7 +158,7 @@ export async function openDiscovery(options: DiscoveryOptions): Promise<{ expire
     try {
       await new Promise<void>((resolve, reject) => {
         server.once("error", reject);
-        server.listen(discoveryLimits.port, options.listenAddress, () => { server.off("error", reject); resolve(); });
+        server.listen(discoveryLimits.port, listenAddress, () => { server.off("error", reject); resolve(); });
       });
     } catch (error) {
       deactivateDiscovery();

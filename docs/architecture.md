@@ -167,7 +167,7 @@ Os nomes da tabela são áreas de trabalho, não novas classes.
 | Transporte mTLS | Conferir os certificados e a prova de posse das chaves conforme o contexto de pareamento ou uso normal. |
 | HTTP e validação | Interpretar método, rota, parâmetros e corpo com Express e funções de validação existentes; representar respostas de forma consistente. |
 | Operações de arquivos | Coordenar consultas, envio, cópia, movimentação e exclusão dentro da raiz local. |
-| Acesso ao sistema operacional | Tratar caminhos, links e permissões POSIX. O armazenamento privado no Windows ainda é recusado por falta da proteção por ACL. |
+| Acesso ao sistema operacional | Tratar caminhos, links, permissões POSIX e ACLs no Windows. A execução nativa Windows ainda precisa ser validada. |
 | Configuração e erros | Conferir valores, descrever falhas sem segredos e separar erros TLS, HTTP e do processo local. |
 
 As regras de arquivos não precisarão conhecer `Request` ou `Response` do Express.

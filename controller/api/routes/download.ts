@@ -6,6 +6,7 @@
  * carregar o arquivo inteiro na memória.
  */
 import type { Router } from "express";
+import { posix } from "node:path";
 import * as files from "../../../model/file/fileService.js";
 import { jsonObject, noBody, query, sendStream, stringField } from "../../connection/sharingService.js";
 
@@ -24,7 +25,7 @@ export function registerDownloads(router: Router, limits: { jsonMaxBytes: number
     const path = stringField(fields.path);
     const source = await files.read(path);
     try {
-      response.attachment(path.split("/").at(-1)!);
+      response.attachment(posix.basename(path));
       await sendStream(source, response);
     } finally { source.destroy(); }
   });
@@ -38,7 +39,7 @@ export function registerDownloads(router: Router, limits: { jsonMaxBytes: number
     const path = body.path === undefined ? "." : stringField(body.path);
     const source = await files.archive(path, limits.zipMaxEntries, limits.zipMaxBytes);
     try {
-      response.attachment(path === "." ? "raiz.zip" : `${path.split("/").at(-1)!}.zip`).type("application/zip");
+      response.attachment(path === "." ? "raiz.zip" : `${posix.basename(path)}.zip`).type("application/zip");
       await sendStream(source, response);
     } finally { source.destroy(); }
   });
